@@ -171,8 +171,8 @@ class ModelDerivatives:
         # ------------------------------------------------------------
         if model == "HS":
             return (1 / self.invH0 * np.sqrt(1 / (2 * np.abs(self.fR0)))
-            * np.pow(self.om * np.exp(-3 * eta) + 4 * self.ol, (2 + self.nHS) / 2)
-            / np.pow(self.om + 4 * self.ol, (1 + self.nHS) / 2)
+            * np.power(self.om * np.exp(-3 * eta) + 4 * self.ol, (2 + self.nHS) / 2)
+            / np.power(self.om + 4 * self.ol, (1 + self.nHS) / 2)
             )
 
         # ------------------------------------------------------------
@@ -339,11 +339,11 @@ class ModelDerivatives:
 
         model = getattr(self, "model", "HS").upper() # in case people select e.g. 'hdki' instead of 'HDKI' (so we force capital letters)
 
-        if model in ("LCDM", "HS"):
+        if model in ("HS"):
             return self.screening * (
                 9 / (4 * np.square(self.invH0)) * np.square(1 / np.abs(self.fR0))
-                * np.pow(self.om * np.exp(-3 * eta) + 4 * self.ol, 5)
-                / np.pow(self.om + 4 * self.ol, 4)
+                * np.power(self.om * np.exp(-3 * eta) + 4 * self.ol, 5)
+                / np.power(self.om + 4 * self.ol, 4)
             )
         else:
             return 0.0
@@ -662,7 +662,7 @@ class ModelDerivatives:
 
         model = getattr(self, "model", "HS").upper() # in case people select e.g. 'hdki' instead of 'HDKI' (so we force capital letters)
 
-        if model in ("LCDM", "HS"):
+        if model in ("HS"):
             return self.screening * (
                 45.0 / (8.0 * np.square(self.invH0)) * np.power(1 / np.abs(self.fR0), 3.0)
                 * np.power(self.om * np.exp(-3.0 * eta) + 4.0 * self.ol, 7.0)
