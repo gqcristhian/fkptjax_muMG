@@ -555,13 +555,13 @@ def _calculate_jax_core(
     fk_grid = fk
 
     # I2uudd1D: subtract k^2 * sigma2v * P_L(k)
-    I2uudd1BpC = I2uudd1BpC - logk_grid2 * sigma2v * pkl_k
+    I2uudd1BpC = I2uudd1BpC - logk_grid2 * sigma2v * pkl_k  
 
     # I3uuud2D: subtract 2 * k^2 * sigma2v * f(k) * P_L(k)
-    I3uuud2BpC = I3uuud2BpC - 2.0 * logk_grid2 * sigma2v * fk_grid * pkl_k
+    I3uuud2BpC = I3uuud2BpC - 2.0 * logk_grid2 * sigma2v * fk_grid * pkl_k  
 
     # I4uuuu3D: subtract k^2 * sigma2v * f(k)^2 * P_L(k)
-    I4uuuu3BpC = I4uuuu3BpC - logk_grid2 * sigma2v * fk_grid ** 2 * pkl_k
+    I4uuuu3BpC = I4uuuu3BpC - logk_grid2 * sigma2v * fk_grid ** 2 * pkl_k  
 
     return (
         P22dd, P22du, P22uu,
