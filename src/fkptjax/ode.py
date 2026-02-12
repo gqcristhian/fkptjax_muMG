@@ -1,4 +1,4 @@
-from typing import Callable, Tuple, Union
+from typing import Callable, Tuple, Union, Optional
 
 import numpy as np
 
@@ -70,6 +70,11 @@ class ModelDerivatives:
         z_div: float = 1.0,
         z_TGR: float = 10.0,
         z_tw: float = 0.5,
+        # --- IDE model + parameters
+        ide_variant: str = "IDEModel1",
+        beta: float = 0.0,
+        w: float = -1.0,
+        wa: float = 0.0,
     ) -> None:
         """Initialize the Hu-Sawicki f(R) model parameters.
 
@@ -116,6 +121,7 @@ class ModelDerivatives:
         # switches
         self.model = str(model)
         self.mg_variant = str(mg_variant)
+        self.ide_variant = str(ide_variant)
 
         # HDKI: mu_OmDE
         self.mu0 = float(mu0)
@@ -135,6 +141,11 @@ class ModelDerivatives:
         self.z_div = float(z_div)
         self.z_TGR = float(z_TGR)
         self.z_tw = float(z_tw)
+
+        # --- IDE parameters
+        self.beta = float(beta)
+        self.w = float(w)
+        self.wa = float(wa)
 
     def mu(self, eta: Union[float, Float64NDArray], k: Union[float, Float64NDArray]) -> Union[float, Float64NDArray]:
         """Compute scale-dependent modification to the Poisson equation μ(k, η).
@@ -222,10 +233,26 @@ class ModelDerivatives:
                     + 0.5*(mu_z2 - mu_z1)*Tz_div
                     + 0.5*(1.0 - mu_z2)*Tz_TGR
                 )
+                
+        # ------------------------------------------------------------
+        # IDE models: adding the G_eff/G = mu term
+        # ------------------------------------------------------------
+        if model == "IDE":
+            v = getattr(self, "ide_variant", "IDEModel1")
+            
+            if v == "IDEModel1":
+                rho_de_by_rho_m = self.ol/self.om
+                return 1.0 + self.beta*2.0/(3.0*self.om)*rho_de_by_rho_m*(-2.0 + 3.0*self.w + self.beta*(1.0+rho_de_by_rho_m))
+                        
+            if v == "IDEModel2":
+                return 1.0
 
-            raise ValueError(f"Unknown HDKI mg_variant={v!r}")
-
-        raise ValueError(f"Unknown model={model!r} (expected 'LCDM'/'GR', 'HS', or 'HDKI')")
+            if v == "DS":
+                return 1.0
+                
+        # --- IDE modifications end -------------------------------------
+        
+        raise ValueError(f"Unknown model={model!r} (expected 'LCDM'/'GR', 'HS', 'HDKI', or 'IDE')")
 
     def f1(self, eta: Union[float, Float64NDArray]) -> Union[float, Float64NDArray]:
         """Compute logarithmic growth rate f₁(η) = d ln D/d ln a.
