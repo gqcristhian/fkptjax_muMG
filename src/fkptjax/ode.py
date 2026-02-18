@@ -75,6 +75,9 @@ class ModelDerivatives:
         beta: float = 0.0,
         w: float = -1.0,
         wa: float = 0.0,
+        rho_m_IDE: float = 0.3,
+        rho_de_IDE: float = 0.7,
+        omegam_IDE: float = 0.3,
     ) -> None:
         """Initialize the Hu-Sawicki f(R) model parameters.
 
@@ -146,6 +149,9 @@ class ModelDerivatives:
         self.beta = float(beta)
         self.w = float(w)
         self.wa = float(wa)
+        self.rho_m_IDE = float(rho_m_IDE)
+        self.rho_de_IDE = float(rho_de_IDE)
+        self.omegam_IDE = float(omegam_IDE)
 
     def mu(self, eta: Union[float, Float64NDArray], k: Union[float, Float64NDArray]) -> Union[float, Float64NDArray]:
         """Compute scale-dependent modification to the Poisson equation μ(k, η).
@@ -243,8 +249,12 @@ class ModelDerivatives:
             v = getattr(self, "ide_variant", "IDEModel1")
             
             if v == "IDEModel1":
-                rho_de_by_rho_m = self.ol/self.om
-                mu = 1.0 + self.beta*2.0/(3.0*self.om)*rho_de_by_rho_m*(-2.0 + 3.0*self.w + self.beta*(1.0+rho_de_by_rho_m))
+                rho_m = self.rho_m_IDE
+                rho_de = self.rho_de_IDE
+                omegam = self.omegam_IDE
+                rho_de_by_rho_m = rho_de/rho_m
+                mu = 1.0 + self.beta*2.0/(3.0*omegam)*rho_de_by_rho_m*(-2.0 + 3.0*self.w + self.beta*(1.0+rho_de_by_rho_m))
+                print("mu: ", mu)
                 return mu
                         
             if v == "IDEModel2":
