@@ -75,9 +75,7 @@ class ModelDerivatives:
         beta: float = 0.0,
         w: float = -1.0,
         wa: float = 0.0,
-        rho_m_IDE: float = 0.3,
-        rho_de_IDE: float = 0.7,
-        omegam_IDE: float = 0.3,
+        oc: float = 0.0,
     ) -> None:
         """Initialize the Hu-Sawicki f(R) model parameters.
 
@@ -149,9 +147,10 @@ class ModelDerivatives:
         self.beta = float(beta)
         self.w = float(w)
         self.wa = float(wa)
-        self.rho_m_IDE = float(rho_m_IDE)
-        self.rho_de_IDE = float(rho_de_IDE)
-        self.omegam_IDE = float(omegam_IDE)
+        self.oc = float(oc)
+
+        # Adding a BG solver routine for IDE models (a_grid, rho_de, rho_c)
+        self._ide_bg: Tuple[Float64NDArray, Float64NDArray, Float64NDArray] | None = None
 
     def mu(self, eta: Union[float, Float64NDArray], k: Union[float, Float64NDArray]) -> Union[float, Float64NDArray]:
         """Compute scale-dependent modification to the Poisson equation μ(k, η).
@@ -247,16 +246,28 @@ class ModelDerivatives:
         # ------------------------------------------------------------
         if model == "IDE":
             v = getattr(self, "ide_variant", "IDEModel1")
-            
+
             if v == "IDEModel1":
-                rho_m = self.rho_m_IDE
-                rho_de = self.rho_de_IDE
-                omegam = self.omegam_IDE
-                rho_de_by_rho_m = rho_de/rho_m
-                mu = 1.0 + self.beta*2.0/(3.0*omegam)*rho_de_by_rho_m*(-2.0 + 3.0*self.w + self.beta*(1.0+rho_de_by_rho_m))
-                print("mu: ", mu)
+                if self._ide_bg is None:
+                    self._solve_ide_background()
+                a_grid, rho_de_arr, rho_c_arr= self._ide_bg
+                a = np.exp(eta)
+                rho_de = np.interp(a, a_grid, rho_de_arr)
+                rho_c = np.interp(a, a_grid, rho_c_arr)
+                
+                omega_m_nocdm = self.om - self.oc
+                rho_m_nocdm = omega_m_nocdm * np.power(a, -3.0)     # scaling the non-CDM part as a^-3
+
+                rho_m = rho_c + rho_m_nocdm
+                rho_de_by_rho_m = rho_de / rho_m
+                rho_tot = rho_m + rho_de
+                omegam = rho_m / rho_tot
+                w_a = self.w + self.wa * (1.0 - a)
+                mu = 1.0 + self.beta * 2.0 / (3.0 * omegam) * rho_de_by_rho_m * (
+                    -2.0 + 3.0 * w_a + self.beta * (1.0 + rho_de_by_rho_m)
+                )
                 return mu
-                        
+
             if v == "IDEModel2":
                 return 1.0
 
@@ -755,7 +766,67 @@ class ModelDerivatives:
                 + self.S3II(eta, x, k, p, Dpk, Dpp, D2f, D2mf)
                 + self.S3FL(eta, x, k, p, Dpk, Dpp, D2f, D2mf)
         ])
+        
+# ---------------- Routines for solving IDE background continuity equations ---------------- #
+    
+    def _ide_background_equations(self, a: float, y: Float64NDArray) -> Float64NDArray:
+        """Define the IDE background continuity equations:
+        
+          d(rho_de)/da = (1/a)*(-3(1+w))rho_de - (1/a)* Q/H
+          d(rho_c)/da  = -3(1/a)*rho_c + (1/a)* Q/H
+          
+        Returns [d_rho_de_da, d_rho_c_da]
+        """
+        rho_de, rho_c = y
 
+        v = getattr(self, "ide_variant", "IDEModel1")
+        if v == "IDEModel1":
+            w_a = self.w + self.wa * (1.0 - a)
+            Q_over_h = self.beta * rho_de
+            d_rho_de_da = (1.0/a)*(-3.0 * (1.0 + w_a)) * rho_de - (1.0/a)* Q_over_h
+            d_rho_c_da = (-3.0/a)*rho_c + (1.0/a)*Q_over_h
+        elif v == "IDEModel2":
+            Q_over_h = self.beta * rho_c
+            w_a = self.w + self.wa * (1.0 - a)
+            d_rho_de_da = (1.0/a)*(-3.0 * (1.0 + w_a)) * rho_de - (1.0/a)* Q_over_h
+            d_rho_c_da = (-3.0/a)*rho_c + (1.0/a)*Q_over_h
+        else:
+            raise ValueError(f"Unknown ide_variant={v!r}")
+
+        return np.array([d_rho_de_da, d_rho_c_da], dtype=float)
+
+    def _solve_ide_background(self) -> None:
+        """Solve IDE coupled ODEs from today (a_max=1) to a_min=1e-12
+
+        Returns: self._ide_bg = (a_grid, rho_de_arr, rho_c_arr)
+        """
+        omega_de = self.ol
+        omega_c = self.oc
+        y0 = np.array([omega_de, omega_c], dtype=float)
+
+        a_max = 1.0
+        a_min = np.exp(-12.0)
+
+        sol = scipy.integrate.solve_ivp(
+            self._ide_background_equations,
+            (a_max, a_min),
+            y0,
+            t_eval=np.linspace(a_max, a_min, 500),
+            method="RK45",
+            rtol=1e-8,
+            atol=1e-10,
+        )
+        if not sol.success:
+            raise RuntimeError(f"IDE background ODE failed: {sol.message}")
+
+        idx = np.argsort(sol.t)
+        a_grid = sol.t[idx]
+        rho_de_arr = sol.y[0][idx]
+        rho_c_arr = sol.y[1][idx]
+        self._ide_bg = (a_grid, rho_de_arr, rho_c_arr)
+
+    # ------------------------------ IDE mod end ------------------------------ #
+    
 class ODESolver:
     """ODE solver class to integrate ODEs from xnow to xstop.
 
