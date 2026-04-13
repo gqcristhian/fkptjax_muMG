@@ -78,6 +78,13 @@ class ModelDerivatives:
         gamma_a: float = 0.0,
         t_k: float = 0.0,
         d_s: float = 0.0,
+        # --- EFTCAMB_HORNDESKI: 1D interpolators over eta=ln(a) for h1, h3, h5
+        # These are built from EFTCAMB's get_eft_functions() output.
+        # mu(k, eta) = h1(eta) * (1 + k^2 * h5(eta)) / (1 + k^2 * h3(eta))
+        # GR limit: h1=1, h3=0, h5=0  ->  mu=1
+        eftcamb_h1_interp=None,   # callable: eta -> h1(eta)
+        eftcamb_h3_interp=None,   # callable: eta -> h3(eta)
+        eftcamb_h5_interp=None,   # callable: eta -> h5(eta)
 
     ) -> None:
         """Initialize the Hu-Sawicki f(R) model parameters.
@@ -153,6 +160,11 @@ class ModelDerivatives:
         self.gamma_a = float(gamma_a)
         self.t_k = float(t_k)
         self.d_s = float(d_s)
+
+        # EFTCAMB_HORNDESKI: 1D interpolators eta -> h1/h3/h5
+        self.eftcamb_h1_interp = eftcamb_h1_interp
+        self.eftcamb_h3_interp = eftcamb_h3_interp
+        self.eftcamb_h5_interp = eftcamb_h5_interp
 
     def _isitgr_k_windows(self, k):
         # Mirrors Fortran ISiTGR_k_windows
@@ -389,7 +401,26 @@ class ModelDerivatives:
 
             raise ValueError(f"Unknown HDKI mg_variant={v!r}")
 
-        raise ValueError(f"Unknown model={model!r} (expected 'LCDM'/'GR', 'HS', or 'HDKI')")
+        # ------------------------------------------------------------
+        # EFTCAMB_HORNDESKI: μ(k, η) from h1, h3, h5 background functions
+        #
+        # From arXiv:2312.10510 (eq. A.2 / your image):
+        #   μ(k, η) = h1(η) * (1 + k² h5(η)) / (1 + k² h3(η))
+        #
+        # where h1, h3, h5 are 1D functions of η = ln(a) only,
+        # computed by EFTCAMB from the α-functions at each timestep.
+        # GR limit: h1=1, h3=0, h5=0  →  μ=1.
+        # ------------------------------------------------------------
+        if model == "EFTCAMB_HORNDESKI":
+            if self.eftcamb_h1_interp is None:
+                return 1.0   # GR fallback
+            k2 = np.square(k)
+            h1 = self.eftcamb_h1_interp(eta)
+            h3 = self.eftcamb_h3_interp(eta)
+            h5 = self.eftcamb_h5_interp(eta)
+            return h1 * (1.0 + k2 * h5) / (1.0 + k2 * h3)
+
+        raise ValueError(f"Unknown model={model!r} (expected 'LCDM'/'GR', 'HS', 'HDKI', or 'EFTCAMB_HORNDESKI')")
 
     def f1(self, eta: Union[float, Float64NDArray]) -> Union[float, Float64NDArray]:
         """Compute logarithmic growth rate f₁(η) = d ln D/d ln a.
@@ -1047,5 +1078,105 @@ def kernel_constants(f0: float, derivs: ModelDerivatives, solver: ODESolver,
 
     KR1LS  = (21.0/5.0) * D3  / (Dk * Dp * Dp)
     KR1pLS = (21.0/5.0) * dD3 / (Dk * Dp * Dp) / (3.0 * f0)
+
+    return ALS, AprimeLS, KR1LS, KR1pLS
+
+
+def kernel_constants_eftcamb(
+    f0: float,
+    derivs: ModelDerivatives,
+    solver: ODESolver,
+    KMIN: float = 1e-8,
+    x: float = 0.0,
+) -> Tuple[float, float, float, float]:
+    """Compute one-loop kernel constants for EFTCAMB Horndeski gravity.
+
+    For the EFTCAMB_HORNDESKI model, the kernel constants A (≡ calA in FolpsD/fkptjax)
+    and A'/f0 (≡ calAp/f0) are derived from the h1, h3, h5 quantities computed by
+    EFTCAMB's Fortran subroutine ``compute_oneloop_kernels``.
+
+    The physical definitions (arXiv:2312.10510, Eqs. A.8-A.10) are:
+        h1 = (1 + αT) / M*²
+        h3 = [(2 - αB) a1 + 2 a2] / (2 μ₂)
+        h5 = [((αM+1)/(αT+1)) a1 + a2] / μ₂
+
+    In the large-scale (k→0) limit the EdS F2/G2 coefficients become:
+
+        A      = h1 / h1_GR    (normalized so A = 1 in GR)
+        Aprime = h3 * f0       (frame-lagging contribution, 0 in GR)
+
+    For the third-order constants (CFD3, CFD3p) we fall back to the standard
+    ODE solver using the EFTCAMB μ(k,a) interpolator stored in *derivs*.  If the
+    model is not EFTCAMB_HORNDESKI (e.g. during GR validation runs), this function
+    transparently delegates to the standard ``kernel_constants`` routine.
+
+    Parameters
+    ----------
+    f0 : float
+        Large-scale logarithmic growth rate f(k→0) = d ln D / d ln a.
+    derivs : ModelDerivatives
+        Model instance.  Must have ``model == 'EFTCAMB_HORNDESKI'`` and carry the
+        pre-computed scalars ``eftcamb_h1``, ``eftcamb_h3``, ``eftcamb_h5``.
+    solver : ODESolver
+        ODE solver (used for the third-order CFD3 constants).
+    KMIN : float, optional
+        Super-horizon wavenumber used as the k→0 proxy, default 1e-8 h/Mpc.
+    x : float, optional
+        Angle cosine between k and p modes, default 0 (perpendicular).
+
+    Returns
+    -------
+    ALS : float
+        Large-scale A kernel constant (= 1 in GR / EdS).
+    AprimeLS : float
+        Large-scale A' kernel constant (= 0 in GR / EdS), NOT divided by f0.
+        (Caller divides by f0 to get ApOverf0 for JaxCalculator.)
+    KR1LS : float
+        Third-order kernel constant CFD3 (= 1 in EdS).
+    KR1pLS : float
+        Third-order kernel constant CFD3' (= 1 in EdS), already divided by 3 f0.
+
+    Notes
+    -----
+    GR limit check: when h1 ≈ 1 (M*²=1, αT≈0), h3 ≈ 0, h5 ≈ 0, the function
+    returns (1.0, 0.0, CFD3, CFD3p) — identical to standard ``kernel_constants``
+    in the ΛCDM case.
+    """
+    model_u = str(getattr(derivs, "model", "")).upper()
+
+    # -----------------------------------------------------------------
+    # Non-Horndeski models: delegate to the standard ODE-based routine
+    # -----------------------------------------------------------------
+    if model_u != "EFTCAMB_HORNDESKI":
+        return kernel_constants(f0=f0, derivs=derivs, solver=solver, KMIN=KMIN, x=x)
+
+    # -----------------------------------------------------------------
+    # A and A' from h1, h3 evaluated at the output epoch (k→0 limit).
+    # In the k→0 limit: μ → h1(η), so A = h1(η_out).
+    # A' = dA/d(ln a) at η_out, estimated from the h1 interpolator derivative.
+    # GR limit: h1=1 → A=1, h1'=0 → A'=0.
+    # -----------------------------------------------------------------
+    eta_out = solver.xstop   # η = ln(a) at output redshift
+
+    h1_interp = getattr(derivs, "eftcamb_h1_interp", None)
+    h3_interp = getattr(derivs, "eftcamb_h3_interp", None)
+
+    if h1_interp is None:
+        ALS = 1.0
+        AprimeLS = 0.0
+    else:
+        ALS = float(h1_interp(eta_out))
+        # Numerical derivative dh1/d(eta) at eta_out
+        deps = 1e-4
+        AprimeLS = float((h1_interp(eta_out + deps) - h1_interp(eta_out - deps)) / (2 * deps))
+
+    # -----------------------------------------------------------------
+    # Third-order constants: run the standard ODE solver with the
+    # EFTCAMB μ(k,a) interpolator already stored in derivs.
+    # -----------------------------------------------------------------
+    Dk, dDk, Dp, dDp, D2p, dD2p, D2m, dD2m, D3, dD3 = D3v2(x, KMIN, KMIN, derivs, solver)
+
+    KR1LS  = (21.0 / 5.0) * D3  / (Dk * Dp * Dp)
+    KR1pLS = (21.0 / 5.0) * dD3 / (Dk * Dp * Dp) / (3.0 * f0)
 
     return ALS, AprimeLS, KR1LS, KR1pLS
