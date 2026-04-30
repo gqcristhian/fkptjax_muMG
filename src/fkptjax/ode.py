@@ -58,9 +58,9 @@ class ModelDerivatives:
         omegaBD: float = 0.0,
         # --- nDGP
         r_c: float = 1.0e30,
-        # --- HDKI-like: mu_OmDE
+        # --- HDKI: mu_OmDE
         mu0: float = 0.0,
-        # --- HDKI-like: BZ
+        # --- HDKI: BZ
         beta_1: float = 1.0,
         lambda_1: float = 1.0,
         exp_s: float = 1.0,
@@ -144,7 +144,7 @@ class ModelDerivatives:
         # HDKI: mu_OmDE
         self.mu0 = float(mu0)
 
-        # HDKI: BZ-like
+        # HDKI: BZ
         self.beta_1 = float(beta_1)
         self.lambda_1 = float(lambda_1)
         self.exp_s = float(exp_s)
@@ -205,7 +205,7 @@ class ModelDerivatives:
           - model='LCDM' (or 'GR'): μ = 1
           - model='HS'            : Hu-Sawicki f(R)
           - model='NDGP'          : nDGP braneworld
-          - model='HDKI'          : Horndeski-like, with mg_variant in {'mu_OmDE', 'BZ'}
+          - model='HDKI'          : Horndeski, with mg_variant in {'mu_OmDE', 'BZ', 'EFT_DE'}
           - model='PHENOM'        : phenomenological parameterizations, with
                                     mg_variant in {'binning', 'growth_index', 'growth_index_yukawa'}
 
@@ -280,7 +280,7 @@ class ModelDerivatives:
             return 1.0 + 1.0 / (3.0 * beta)
 
         # ------------------------------------------------------------
-        # HDKI-like parameterizations
+        # HDKI parameterizations
         #   - mu_OmDE: 1 + mu0 * Omega_DE(a)/Omega_Lambda
         #   - BZ:      (1 + beta1 * x) / (1 + x), x = lambda1^2 a^s k^2
         #   - EFT_DE:  EFTCAMB Horndeski μ(k,eta) from h1/h3/h5 interpolators
@@ -1056,7 +1056,7 @@ def D3v2(x: float, k: float, p: float, derivs: ModelDerivatives, solver: ODESolv
 
     Notes
     -----
-    Initial conditions at xnow for ΛCDM-like EdS universe:
+    Initial conditions at xnow for ΛCDM EdS universe:
     - First-order: Dₖ = Dₚ = exp(xnow), Dₖ' = Dₚ' = exp(xnow)
     - Second-order: D₂± = (3/7)exp(2*xnow)(1-x²), D₂±' = (6/7)exp(2*xnow)(1-x²)
     - Third-order: D₃ = (5/63)exp(3*xnow)(1-x²)² [sum over ±],
