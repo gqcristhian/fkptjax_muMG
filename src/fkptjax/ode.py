@@ -297,7 +297,7 @@ class ModelDerivatives:
                 x = np.power(self.lambda_1, 2.0) * k2 * np.power(a, self.exp_s)
                 return (1.0 + self.beta_1 * x) / (1.0 + x)
 
-            if v in ("eft_de", "eftde", "eftcamb_horndeski", "horndeski"):
+            if v in ("eft_de", "eftde"):
                 if (
                     self.eftcamb_h1_interp is None
                     or self.eftcamb_h3_interp is None
@@ -1100,7 +1100,7 @@ def kernel_constants(
 
     is_eft_de = (
         model_u == "HDKI"
-        and variant in ("eft_de", "eftde", "eftcamb_horndeski", "horndeski")
+        and variant in ("eft_de", "eftde")
     )
 
     Dk, dDk, Dp, dDp, D2p, dD2p, D2m, dD2m, D3, dD3 = D3v2(
