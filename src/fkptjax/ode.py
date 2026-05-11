@@ -239,30 +239,27 @@ class ModelDerivatives:
         # HS (Hu-Sawicki): mu = 1 + 2*beta2*k^2/(k^2 + a^2 m(eta)^2)
         # ------------------------------------------------------------
         if model == "HS":
-            if self.fR0_HS == 0.0:
+            if np.abs(self.fR0_HS) < 1.0e-30:
                 return 1.0
 
             a = np.exp(eta)
             invH0 = self.invH0
 
-            # Present-day DE density parameter
             omega_de0 = self.ol
 
-            # CPL background DE contribution Y(a)
-            # Defaults to LCDM if w0=-1 and wa=0
             w0 = getattr(self, "w0", -1.0)
             wa = getattr(self, "wa", 0.0)
 
             Y_a = omega_de0 * a**(-3.0 * (1.0 + w0 + wa)) * np.exp(3.0 * wa * (a - 1.0))
-            Y_0 = omega_de0  # because at a=1, Y(a)=Omega_DE,0
+            Y_0 = omega_de0
 
             m = (
                 (1.0 / invH0)
-                * np.sqrt(1.0 / (2.0 * np.abs(self.fR0_HS)))
+                * np.sqrt(1.0 / ((1.0 + self.n_HS) * np.abs(self.fR0_HS)))
                 * np.power(self.om * a**(-3.0) + 4.0 * Y_a, (2.0 + self.n_HS) / 2.0)
                 / np.power(self.om + 4.0 * Y_0, (1.0 + self.n_HS) / 2.0)
             )
-
+            
             return 1.0 + 2.0 * self.beta2 * k2 / (k2 + (a * m) ** 2)
 
         # ------------------------------------------------------------
