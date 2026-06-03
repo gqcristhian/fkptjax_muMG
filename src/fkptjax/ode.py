@@ -89,6 +89,8 @@ class ModelDerivatives:
         eftcamb_h1_interp=None,   # callable: eta -> h1(eta)
         eftcamb_h3_interp=None,   # callable: eta -> h3(eta)
         eftcamb_h5_interp=None,   # callable: eta -> h5(eta)
+        # --- optional numba fast path for the PHENOM/binning RHS
+        use_numba: bool = False,
     ) -> None:
         """Initialize the Hu-Sawicki f(R) model parameters.
 
@@ -173,6 +175,28 @@ class ModelDerivatives:
         self.eftcamb_h1_interp = eftcamb_h1_interp
         self.eftcamb_h3_interp = eftcamb_h3_interp
         self.eftcamb_h5_interp = eftcamb_h5_interp
+
+        # Optional numba fast path: only for the PHENOM/binning RHS, and only if
+        # numba is importable.  When active, firstOrder/secondOrder/thirdOrder
+        # dispatch to the compiled functions in binning_numba; all other models
+        # and the use_numba=False default are completely unaffected.
+        self.use_numba = bool(use_numba)
+        self._use_numba_binning = False
+        self._nb_P = None
+        if self.use_numba:
+            from . import binning_numba as _bnb
+            if (_bnb.HAVE_NUMBA
+                    and str(self.model).upper() == "PHENOM"
+                    and str(self.mg_variant).strip().lower() == "binning"):
+                self._bnb = _bnb
+                self._nb_P = _bnb.pack_constants(
+                    om=self.om, ol=self.ol,
+                    mu1=self.mu1, mu2=self.mu2, mu3=self.mu3, mu4=self.mu4,
+                    z_div=self.z_div, z_TGR=self.z_TGR, z_tw=self.z_tw,
+                    scale_bins=self.scale_bins,
+                    k_TGR=self.k_TGR, k_c=self.k_c, k_S=self.k_S, k_tw=self.k_tw,
+                )
+                self._use_numba_binning = True
 
     def _isitgr_k_windows(self, k):
         # Mirrors Fortran ISiTGR_k_windows
@@ -845,6 +869,8 @@ class ModelDerivatives:
         Implements derivsFirstOrder from csrc/gsm_diffeqs.c.
         The second-order ODE is: D'' + (2-f₁)D' - f₁μ(k)D = 0.
         """
+        if self._use_numba_binning:
+            return self._bnb.nb_firstOrder(x, np.atleast_2d(y), np.atleast_1d(k).astype(np.float64), self._nb_P)
         f1x = self.f1(x)
         return np.array([y[1], f1x * self.mu(x, k) * y[0] - (2 - f1x) * y[1]])
 
@@ -854,6 +880,8 @@ class ModelDerivatives:
           y = [Dk, Dk', Dp, Dp', D2, D2']
         where D2 corresponds to the k_f = |k+p| mode and depends on angle x = cos(theta).
         """
+        if self._use_numba_binning:
+            return self._bnb.nb_secondOrder(eta, np.asarray(y, dtype=np.float64), x, k, p, self._nb_P)
         f2 = self.f1(eta)       # in your code: f1(eta) = 3/2 * Omega_m = notebook's f2
         f1 = 2.0 - f2           # friction term = 2 + H'/H = 2 - 3/2 Omega_m = notebook's f1
 
@@ -905,6 +933,8 @@ class ModelDerivatives:
         Implements derivsThirdOrder from csrc/gsm_diffeqs.c.
         Third-order source combines S3I, S3II, S3FL, and S3dI terms.
         """
+        if self._use_numba_binning:
+            return self._bnb.nb_thirdOrder(eta, np.asarray(y, dtype=np.float64), x, k, p, self._nb_P)
         f1eta = self.f1(eta)
         f2eta = 2 - f1eta
         kplusp = self.kpp(x, k, p)
