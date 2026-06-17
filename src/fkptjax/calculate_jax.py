@@ -768,3 +768,33 @@ class JaxCalculator(AbsCalculator):
         results_np = tuple(np.asarray(r) for r in results)
 
         return KFunctionsOut(*results_np)
+
+    def evaluate_jax(self, Pk_in, Pk_nw_in, fk_in, A, ApOverf0, CFD3,
+                     CFD3p, sigma2v, f0):
+        """Fully jax-traceable variant of :meth:`evaluate`.
+
+        Identical to ``evaluate`` but keeps everything in ``jax.numpy`` (no
+        ``np.stack`` on inputs, no ``np.asarray`` on outputs), so it can be
+        ``jax.jit`` / ``jax.vmap``'d.  Returns a ``KFunctionsOut`` of JAX arrays.
+        """
+        Y_jax = jnp.stack([Pk_in, Pk_nw_in, fk_in / f0], axis=0).astype(jnp.float64)
+        results = _calculate_jax_core(
+            Y_jax,
+            self.spline_sig_jax, self.spline_inv_h_jax, self.spline_inv_h_span_jax, self.spline_n,
+            self.spline_logk['x_shape'], self.spline_logk['idx_lo_flat'], self.spline_logk['idx_hi_flat'],
+            self.spline_logk['a_flat'], self.spline_logk['b_flat'], self.spline_logk['a3_flat'],
+            self.spline_logk['b3_flat'], self.spline_logk['h2_flat'],
+            self.spline_kk['x_shape'], self.spline_kk['idx_lo_flat'], self.spline_kk['idx_hi_flat'],
+            self.spline_kk['a_flat'], self.spline_kk['b_flat'], self.spline_kk['a3_flat'],
+            self.spline_kk['b3_flat'], self.spline_kk['h2_flat'],
+            self.spline_y['x_shape'], self.spline_y['idx_lo_flat'], self.spline_y['idx_hi_flat'],
+            self.spline_y['a_flat'], self.spline_y['b_flat'], self.spline_y['a3_flat'],
+            self.spline_y['b3_flat'], self.spline_y['h2_flat'],
+            self.logk_grid2_jax, self.dkk_jax, self.dkk_reshaped_jax, self.scale_Q_jax,
+            self.r_jax, self.r2_jax, self.x_jax, self.w_jax, self.x2_jax, self.y2_jax, self.y_jax,
+            self.r_r_jax, self.r2_r_jax, self.x_r_jax, self.w_r_jax, self.x2_r_jax, self.y2_r_jax,
+            self.AngleEvR_jax, self.AngleEvR2_jax, self.dkk_r_jax,
+            self.kk_grid_jax, self.logk_grid_jax,
+            A, ApOverf0, CFD3, CFD3p, sigma2v
+        )
+        return KFunctionsOut(*results)
