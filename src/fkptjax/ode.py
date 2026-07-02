@@ -219,6 +219,7 @@ class ModelDerivatives:
         # Internal diagnostic / optimization flag used by the FKPT rescaling
         # branch.  It describes the MG part only; a supplied neutrino_correction
         # still makes the effective Poisson source scale-dependent.
+        self.is_EFTDE_scale_dependent = self._infer_is_EFTDE_scale_dependent()
         self.is_MG_scale_dependent = self._infer_is_MG_scale_dependent()
 
     def _infer_is_MG_scale_dependent(self) -> bool:
@@ -251,8 +252,7 @@ class ModelDerivatives:
             if variant == "bz":
                 return True
             if variant in ("eft_de", "eftde"):
-                # h1*(1+k^2 h5)/(1+k^2 h3) is generally scale-dependent.
-                return True
+                return self.is_EFTDE_scale_dependent
             return True
 
         if model == "PHENOM":
@@ -280,6 +280,44 @@ class ModelDerivatives:
     def is_effective_mu_scale_dependent(self) -> bool:
         """Whether the full source mu_MG * mu_nu depends explicitly on k."""
         return bool(self.is_MG_scale_dependent or self.neutrino_correction is not None)
+
+    def _infer_is_EFTDE_scale_dependent(self) -> bool:
+        """Return whether the EFTDE (EFTCAMB Horndeski) mu(k, eta) depends on k.
+
+        The EFTDE modification is
+            mu(k, eta) = h1 * (1 + k^2 h5) / (1 + k^2 h3),
+        which reduces to the scale-independent limit
+            mulk = h1 * h5 / h3
+        when the k-dependence is negligible. The detection procedure is:
+
+          1. Evaluate mu(k) = h1*(1 + k^2 h5)/(1 + k^2 h3) on ~20 k-bins in
+             [0.01, 0.5], for ~10 eta-bins in [-4, 0].
+          2. For each eta bin, compute the std of mu(k) over the k-bins.
+          3. Check whether that std exceeds 3% of mulk (= h1*h5/h3) for that
+             eta bin.
+          4. If any single eta bin exceeds the threshold, return True.
+
+        If the EFTCAMB interpolators are not available the model cannot be
+        scale-dependent through this branch, so return False.
+        """
+        if (
+            self.eftcamb_h1_interp is None
+            or self.eftcamb_h3_interp is None
+            or self.eftcamb_h5_interp is None
+        ):
+            return False
+        kbins = np.linspace(0.01, 0.5, 20)
+        etabins = np.linspace(-4.0, 0.0, 10)
+        k2 = np.square(kbins)
+        for eta in etabins:
+            h1 = self.eftcamb_h1_interp(eta)
+            h3 = self.eftcamb_h3_interp(eta)
+            h5 = self.eftcamb_h5_interp(eta)
+            mu_k = h1 * (1.0 + k2 * h5) / (1.0 + k2 * h3)
+            mulk = h1 * h5 / h3
+            if np.std(mu_k) > 0.03 * np.abs(mulk):
+                return True
+        return False
 
     def _isitgr_k_windows(self, k):
         # Mirrors Fortran ISiTGR_k_windows
@@ -408,12 +446,12 @@ class ModelDerivatives:
                     or self.eftcamb_h5_interp is None
                 ):
                     return 1.0   # GR fallback
-
                 h1 = self.eftcamb_h1_interp(eta)
                 h3 = self.eftcamb_h3_interp(eta)
                 h5 = self.eftcamb_h5_interp(eta)
-
-                return h1 * (1.0 + k2 * h5) / (1.0 + k2 * h3)
+                if self.is_EFTDE_scale_dependent:
+                    return h1 * (1.0 + k2 * h5) / (1.0 + k2 * h3)
+                return h1 * h5 / h3
 
             raise ValueError(
                 f"Unknown HDKI mg_variant={v!r} "
@@ -1234,23 +1272,9 @@ def kernel_constants(
 ) -> Tuple[float, float, float, float]:
     """
     Compute one-loop kernel constants (ALS, AprimeLS, KR1LS, KR1pLS).
-
-    For ordinary models, use the standard ODE-based notebook definitions.
-
-    For EFTCAMB Horndeski models encoded as:
-        model = "HDKI"
-        mg_variant = "EFT_DE"
-
-    use h1(eta) for the large-scale A kernel and dh1/deta for A',
-    while still using the ODE system for KR1LS and KR1pLS.
+    
     """
-    model_u = str(getattr(derivs, "model", "")).upper()
-    variant = str(getattr(derivs, "mg_variant", "")).strip().lower()
 
-    is_eft_de = (
-        model_u == "HDKI"
-        and variant in ("eft_de", "eftde")
-    )
 
     Dk, dDk, Dp, dDp, D2p, dD2p, D2m, dD2m, D3, dD3 = D3v2(
         x, KMIN, KMIN, derivs, solver
@@ -1258,23 +1282,6 @@ def kernel_constants(
 
     KR1LS = (21.0 / 5.0) * D3 / (Dk * Dp * Dp)
     KR1pLS = (21.0 / 5.0) * dD3 / (Dk * Dp * Dp) / (3.0 * f0)
-
-    if is_eft_de:
-        eta_out = solver.xstop
-        h1_interp = getattr(derivs, "eftcamb_h1_interp", None)
-
-        if h1_interp is None:
-            ALS = 1.0
-            AprimeLS = 0.0
-        else:
-            ALS = float(h1_interp(eta_out))
-            deps = 1e-4
-            AprimeLS = float(
-                (h1_interp(eta_out + deps) - h1_interp(eta_out - deps))
-                / (2.0 * deps)
-            )
-
-        return ALS, AprimeLS, KR1LS, KR1pLS
 
     C = (3.0 / 7.0) * Dk * Dp
     Cp = (3.0 / 7.0) * (dDk * Dp + Dk * dDp)
