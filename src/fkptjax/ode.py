@@ -39,6 +39,13 @@ class ModelDerivatives:
     This implementation mirrors the Hu-Sawicky Model functions in csrc/models.c.
     All calculations are performed in conformal time η = ln(a) where a is the scale factor.
     """
+
+    # EFTDE is considered effectively scale-independent only over the DESI
+    # fitting window. In that case its single-scale representative is k=0.1.
+    _EFTDE_K_MIN = 0.01
+    _EFTDE_K_MAX = 0.3
+    _EFTDE_K_PIVOT = 0.1
+    _EFTDE_SCALE_TOL = 0.03
      
     def __init__(
         self,
@@ -282,41 +289,62 @@ class ModelDerivatives:
         return bool(self.is_MG_scale_dependent or self.neutrino_correction is not None)
 
     def _infer_is_EFTDE_scale_dependent(self) -> bool:
-        """Return whether the EFTDE (EFTCAMB Horndeski) mu(k, eta) depends on k.
+        """Return whether EFTDE mu varies appreciably over DESI scales.
 
-        The EFTDE modification is
-            mu(k, eta) = h1 * (1 + k^2 h5) / (1 + k^2 h3),
-        which reduces to the scale-independent limit
-            mulk = h1 * h5 / h3
-        when the k-dependence is negligible. The detection procedure is:
-
-          1. Evaluate mu(k) = h1*(1 + k^2 h5)/(1 + k^2 h3) on ~20 k-bins in
-             [0.01, 0.5], for ~10 eta-bins in [-4, 0].
-          2. For each eta bin, compute the std of mu(k) over the k-bins.
-          3. Check whether that std exceeds 3% of mulk (= h1*h5/h3) for that
-             eta bin.
-          4. If any single eta bin exceeds the threshold, return True.
-
-        If the EFTCAMB interpolators are not available the model cannot be
-        scale-dependent through this branch, so return False.
+        This is an effective, survey-range classification, not a statement
+        that the model is scale-independent at every k.  We compare the exact
+        EFTDE source over 0.01 <= k <= 0.3 h/Mpc with its value at the
+        representative DESI scale k_pivot = 0.1 h/Mpc.  If the maximum
+        fractional departure exceeds 3% at any sampled time, the model is
+        treated as scale-dependent.
         """
+        model = str(getattr(self, "model", "")).strip().upper()
+        variant = str(getattr(self, "mg_variant", "")).strip().lower()
+        if model != "HDKI" or variant not in ("eft_de", "eftde"):
+            return False
+
         if (
             self.eftcamb_h1_interp is None
             or self.eftcamb_h3_interp is None
             or self.eftcamb_h5_interp is None
         ):
             return False
-        kbins = np.linspace(0.01, 0.5, 20)
+
+        k_pivot = self._EFTDE_K_PIVOT
+        kbins = np.geomspace(self._EFTDE_K_MIN, self._EFTDE_K_MAX, 20)
         etabins = np.linspace(-4.0, 0.0, 10)
         k2 = np.square(kbins)
+        k2_pivot = k_pivot**2
+
         for eta in etabins:
             h1 = self.eftcamb_h1_interp(eta)
             h3 = self.eftcamb_h3_interp(eta)
             h5 = self.eftcamb_h5_interp(eta)
-            mu_k = h1 * (1.0 + k2 * h5) / (1.0 + k2 * h3)
-            mulk = h1 * h5 / h3
-            if np.std(mu_k) > 0.03 * np.abs(mulk):
+
+            denom_k = 1.0 + k2 * h3
+            denom_pivot = 1.0 + k2_pivot * h3
+            if (
+                not np.all(np.isfinite([h1, h3, h5]))
+                or not np.all(np.isfinite(denom_k))
+                or not np.isfinite(denom_pivot)
+                or np.any(np.abs(denom_k) < 1.0e-12)
+                or np.abs(denom_pivot) < 1.0e-12
+            ):
                 return True
+
+            mu_k = h1 * (1.0 + k2 * h5) / denom_k
+            mu_pivot = h1 * (1.0 + k2_pivot * h5) / denom_pivot
+
+            if not np.all(np.isfinite(mu_k)) or not np.isfinite(mu_pivot):
+                return True
+
+            normalization = max(np.abs(float(mu_pivot)), 1.0e-12)
+            max_fractional_departure = np.max(
+                np.abs(mu_k - mu_pivot) / normalization
+            )
+            if max_fractional_departure > self._EFTDE_SCALE_TOL:
+                return True
+
         return False
 
     def _isitgr_k_windows(self, k):
@@ -451,7 +479,12 @@ class ModelDerivatives:
                 h5 = self.eftcamb_h5_interp(eta)
                 if self.is_EFTDE_scale_dependent:
                     return h1 * (1.0 + k2 * h5) / (1.0 + k2 * h3)
-                return h1 * h5 / h3
+
+                # The model is effectively scale-independent over DESI scales.
+                # Use the exact EFTDE source at the representative DESI scale,
+                # rather than its k -> 0 or k -> infinity limit.
+                k2_pivot = self._EFTDE_K_PIVOT**2
+                return h1 * (1.0 + k2_pivot * h5) / (1.0 + k2_pivot * h3)
 
             raise ValueError(
                 f"Unknown HDKI mg_variant={v!r} "
