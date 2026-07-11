@@ -292,16 +292,24 @@ def Kfuncs_to_tables(
     if kmax is None:
         kmax = float(jnp.maximum(0.5, jnp.max(k)))
 
-    if f0_kmax is None:
-        f0_kmax = float(kmin)
+    # For growth-index models f(k, z) is scale-independent by construction
+    # (up to optional scale-dependent corrections).  Use the conventional
+    # pivot k = 0.1 h/Mpc instead of the low-k average used for scale-dependent
+    # MG models.  Keep the old f0_kmax averaging for all other models.
+    if model_u in ("GROWTH_INDEX", "GROWTHINDEX"):
+        f0_jax = interp(jnp.asarray([0.1]), k_ext, fk_ext)[0]
+    else:
+        if f0_kmax is None:
+            f0_kmax = float(kmin)
 
-    mask0 = (k_ext <= float(f0_kmax))
-    nhead = int(min(5, int(k_ext.shape[0])))
-    f0_jax = jnp.where(
-        jnp.any(mask0),
-        jnp.sum(jnp.where(mask0, fk_ext, 0.0)) / jnp.maximum(jnp.sum(mask0), 1),
-        jnp.mean(fk_ext[:nhead]),
-    )
+        mask0 = (k_ext <= float(f0_kmax))
+        nhead = int(min(5, int(k_ext.shape[0])))
+        f0_jax = jnp.where(
+            jnp.any(mask0),
+            jnp.sum(jnp.where(mask0, fk_ext, 0.0)) / jnp.maximum(jnp.sum(mask0), 1),
+            jnp.mean(fk_ext[:nhead]),
+        )
+
     f0 = float(f0_jax)
 
     if bool(rescale_PS):
