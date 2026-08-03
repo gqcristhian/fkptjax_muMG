@@ -84,10 +84,10 @@ class ModelDerivatives:
         k_c: float = 0.1,
         k_tw: float = 0.01,
         # --- PHENOM: growth-index
-        gamma_0: float = 1.0,
+        gamma_0: float = 0.54545,
         gamma_a: float = 0.0,
-        t_k: float = 0.0,
-        d_s: float = 0.0,
+        t_k: float = 1000.0,
+        d_s: float = 0.0001,
         # --- EFTCAMB_HORNDESKI: 1D interpolators over eta=ln(a) for h1, h3, h5
         # These are built from EFTCAMB's get_eft_functions() output.
         # mu(k, eta) = h1(eta) * (1 + k^2 * h5(eta)) / (1 + k^2 * h3(eta))
@@ -535,74 +535,82 @@ class ModelDerivatives:
                     + 0.5 * (1.0 - self.mu4) * T4
                 )
 
-            if v == "growth_index":
-                Ea2 = self.om * a**(-3.0) + self.ol
-                Om = (self.om * a**(-3.0)) / Ea2
+            if v in ("growth_index", "growth_index_yukawa"):
+                # ----------------------------------------------------
+                # ISiTGR growth-index parameterization
+                #
+                # mu(a, k) = 1 + [mu_gamma(a) - 1] F_k(a, k)
+                #
+                # F_k = [k^2 / (k^2 + (t_k * Hconf)^2)]^d_s
+                # Hconf = a H / c, expressed in h / Mpc.
+                # ----------------------------------------------------
 
+                w0 = self.w0
+                wa = self.wa
+
+                # Present-day curvature density. For the usual flat runs,
+                # self.ol = 1 - self.om and therefore ok0 = 0.
+                ok0 = 1.0 - self.om - self.ol
+
+                # CPL dark-energy background:
+                # rho_DE(a) / rho_DE,0
+                de_scaling = (
+                    a**(-3.0 * (1.0 + w0 + wa))
+                    * np.exp(3.0 * wa * (a - 1.0))
+                )
+
+                Ea2 = (
+                    self.om * a**(-3.0)
+                    + ok0 * a**(-2.0)
+                    + self.ol * de_scaling
+                )
+
+                Om = self.om * a**(-3.0) / Ea2
+                Ok = ok0 * a**(-2.0) / Ea2
+                Ode = self.ol * de_scaling / Ea2
+
+                # gamma_* = d gamma / d ln(a)
                 gamma = self.gamma_0 + self.gamma_a * (1.0 - a)
-                gammap = -self.gamma_a * a
-                logOm = np.log(Om)
+                gamma_star = -self.gamma_a * a
+
+                w_de = w0 + wa * (1.0 - a)
 
                 mu_gi = (2.0 / 3.0) * Om**(gamma - 1.0) * (
                     Om**gamma
                     + (2.0 - 3.0 * gamma)
                     + 3.0 * (gamma - 0.5) * Om
-                    + gammap * logOm
+                    + (2.0 * gamma - 1.0) * Ok
+                    + 3.0 * (gamma - 0.5) * (1.0 + w_de) * Ode
+                    + gamma_star * np.log(Om)
                 )
 
-                mu_gi_pivot = (2.0 / 3.0) * Om**(0.545454 - 1.0) * (
-                    Om**0.545454
-                    + (2.0 - 3.0 * 0.545454)
-                    + 3.0 * (0.545454 - 0.5) * Om
-                )
-
-                aH_over_c = a * np.sqrt(Ea2) / self.invH0
-
-                ds = self.d_s
                 tk = self.t_k
+                ds = self.d_s
 
-                if (ds is None) or (tk is None) or (ds <= 0.0) or (tk <= 0.0):
+                # No damping requested: use the pure, scale-independent
+                # growth-index mu(a).
+                if (
+                    tk is None
+                    or ds is None
+                    or tk <= 0.0
+                    or ds <= 0.0
+                ):
                     return mu_gi
 
-                arg = (k - tk * aH_over_c) / ds
-                Fk = 0.5 * (1.0 + np.tanh(arg))
+                # Hconf = a H / c in h / Mpc.
+                # invH0 = c / H0 = 2997.92458 Mpc / h.
+                Hconf = a * np.sqrt(Ea2) / self.invH0
 
-                return mu_gi_pivot + (mu_gi - mu_gi_pivot) * Fk
+                k2_local = np.square(k)
+                kc2 = np.square(tk * Hconf)
 
-            if v == "growth_index_yukawa":
-                Ea2 = self.om * a**(-3.0) + self.ol
-                Om = (self.om * a**(-3.0)) / Ea2
+                Fk = (
+                    k2_local
+                    / (k2_local + kc2)
+                )**ds
 
-                gamma = self.gamma_0 + self.gamma_a * (1.0 - a)
-                gammap = -self.gamma_a * a
-                logOm = np.log(Om)
-
-                mu_gi = (2.0 / 3.0) * Om**(gamma - 1.0) * (
-                    Om**gamma
-                    + (2.0 - 3.0 * gamma)
-                    + 3.0 * (gamma - 0.5) * Om
-                    + gammap * logOm
-                )
-
-                mu_gi_pivot = (2.0 / 3.0) * Om**(0.545454 - 1.0) * (
-                    Om**0.545454
-                    + (2.0 - 3.0 * 0.545454)
-                    + 3.0 * (0.545454 - 0.5) * Om
-                )
-
-                aH_over_c = a * np.sqrt(Ea2) / self.invH0
-
-                n = self.d_s
-                alpha = self.t_k
-
-                if (n is None) or (alpha is None) or (n <= 0.0) or (alpha <= 0.0):
-                    return mu_gi
-
-                kc2 = (alpha * aH_over_c) ** 2
-                kk2 = k * k
-                Fk = (kk2 / (kk2 + kc2)) ** n
-
-                return mu_gi_pivot + (mu_gi - mu_gi_pivot) * Fk
+                # ISiTGR pivots explicitly to exact GR, mu = 1.
+                return 1.0 + (mu_gi - 1.0) * Fk
 
             raise ValueError(f"Unknown PHENOM mg_variant={v!r}")
             

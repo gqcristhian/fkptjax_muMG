@@ -223,7 +223,7 @@ def Kfuncs_to_tables(
     k_tw: float = 0.01,
     gamma_0: float = 0.54545,
     gamma_a: float = 0.0,
-    t_k: float = 100.0,
+    t_k: float = 1000.0,
     d_s: float = 0.0001,
     eftcamb_h1_interp=None,
     eftcamb_h3_interp=None,
