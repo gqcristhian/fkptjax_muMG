@@ -544,6 +544,7 @@ def Kfuncs_to_tables_jax(
     k_TGR=0.001, k_S=0.5, k_c=0.1, k_tw=0.01,
     rbao=104.0, pmax_bao=0.4, Np_bao=100,
     return_kernel_constants=True, static_ctx=None,
+    fk=None, f0=None,
 ):
     """Fully jax-traceable (jit/vmap-able) ``Kfuncs_to_tables`` for the
     PHENOM/binning model.
@@ -555,6 +556,35 @@ def Kfuncs_to_tables_jax(
     / ``jax.vmap``'d.  The legacy numpy/numba :func:`Kfuncs_to_tables` is
     unchanged.  (The jax ODE is fully converged, so results match the legacy path
     to the legacy RKQS truncation, ~1e-3 in the multipoles.)
+
+    Parameters
+    ----------
+    fk : array or None, default=None
+        Linear growth rate f(k) on the input grid ``k``.  ``None`` (default)
+        integrates the binned-mu growth ODE internally, as before.  Supply it when
+        ``pk``/``pk_now`` come from an emulator that also predicts the growth: the
+        ODE and the emulated P_theta are otherwise independent statements about the
+        same cosmology, so the loop kernels and the linear spectrum can describe
+        subtly different models.  Extended to the internal extrapolated grid by
+        edge-clamped interpolation.  Replaces the LINEAR growth only -- with
+        ``beyond_eds=True`` the beyond-EdS kernel constants still come from
+        ``kernel_constants_jax``, which takes the MG parameters directly.
+
+        SIGN CAVEAT.  The internal ODE returns a SIGNED f = D'/D, which goes
+        negative wherever the modification drives a decaying mode (e.g. mu < 0 deep
+        enough in a bin).  A caller deriving f(k) from a spectrum ratio --
+        sqrt(P_theta/P_delta), the usual route -- can only supply |f|, because
+        P_theta ~ f^2 discards the sign.  In such regions the two sources genuinely
+        disagree and neither is complete: the ODE has the sign, the spectrum ratio
+        does not.  Measured for the binned model at mu1 = -2, the ODE reaches
+        f = -0.47 (z=0.8) / -1.0 (z=0.3) between k_TGR and k_c where the spectrum
+        ratio gives +0.47 / +1.0.  If your model can produce decaying modes and the
+        RSD sign matters, supply a signed f(k) or leave ``fk=None``.
+    f0 : float or None, default=None
+        Scale-independent growth rate.  ``None`` estimates it by averaging ``fk``
+        over ``k <= f0_kmax``.  Pass it explicitly alongside ``fk`` when the caller
+        has its own definition (e.g. sqrt(P_theta/P_delta) at a fixed small k), so
+        the two cannot drift apart.
     """
     import folps as folpsv2
     from folps.tools_jax import extrapolate_pklin, simpson, interp
@@ -575,10 +605,38 @@ def Kfuncs_to_tables_jax(
         k_TGR=k_TGR, k_c=k_c, k_S=k_S, k_tw=k_tw)
     xstop = float(np.log(1.0 / (1.0 + float(z))))
 
-    # growth D(k), D'(k) via diffrax
-    Y = DP_jax(k_ext, P, float(xnow), xstop)
-    D_ext, Dp_ext = Y[0], Y[1]
-    fk_ext = Dp_ext / D_ext
+    # growth: either integrate the binned-mu ODE, or take f(k) from the caller.
+    #
+    # Only the RATIO D'/D is consumed on this route -- the amplitude D is discarded
+    # immediately below -- so an external f(k) fully determines the linear-growth
+    # sector here. (This is specific to the PHENOM/binning route: the rescaling
+    # branch uses D itself, via (D_MG/D_GR)^2, and is untouched by this option.)
+    #
+    # Supplying f(k) matters when pk/pk_now come from an emulator: the ODE and the
+    # emulated P_theta are then two independent statements about the same
+    # cosmology's growth, and nothing forces them to agree, so the loop kernels and
+    # the linear spectrum can describe subtly different models. It also skips a
+    # diffrax solve over the whole extrapolated grid.
+    #
+    # Mirrors how the rescaling branch already accepts caller-supplied
+    # ``kernel_constants`` in place of its own ODE.
+    if fk is None:
+        Y = DP_jax(k_ext, P, float(xnow), xstop)
+        D_ext, Dp_ext = Y[0], Y[1]
+        fk_ext = Dp_ext / D_ext
+    else:
+        # fk arrives on the INPUT grid `k`; lift it to the extrapolated grid.
+        # jnp.interp (not extrapolate_pklin) on purpose: that helper fits a power
+        # law, which is right for P(k) and wrong for f(k). f(k) tends to the
+        # scale-independent f0 as k -> 0 and stays bounded and smooth at high k, so
+        # clamping to the edge values -- exactly jnp.interp's out-of-range
+        # behaviour -- is the physically correct extension.
+        fk_in_arr = jnp.asarray(fk, dtype=jnp.float64)
+        if fk_in_arr.shape != jnp.asarray(k).shape:
+            raise ValueError(
+                f"fk must have the same shape as k; got {fk_in_arr.shape} vs "
+                f"{jnp.asarray(k).shape}")
+        fk_ext = jnp.interp(k_ext, jnp.asarray(k), fk_in_arr)
 
     if kmin is None:
         kmin = float(jnp.minimum(1e-3, jnp.min(k)))
@@ -587,13 +645,20 @@ def Kfuncs_to_tables_jax(
     if f0_kmax is None:
         f0_kmax = float(kmin)
 
-    mask0 = (k_ext <= float(f0_kmax))
-    nhead = int(min(5, int(k_ext.shape[0])))
-    f0 = jnp.where(
-        jnp.any(mask0),
-        jnp.sum(jnp.where(mask0, fk_ext, 0.0)) / jnp.maximum(jnp.sum(mask0), 1),
-        jnp.mean(fk_ext[:nhead]),
-    )
+    if f0 is not None:
+        # Take the caller's f0 verbatim. The estimator below averages f(k) over
+        # k <= f0_kmax, which is a DIFFERENT definition from, say, evaluating
+        # sqrt(P_theta/P_delta) at a fixed small k -- close, but not equal, and the
+        # difference would drift silently between caller and library.
+        f0 = jnp.asarray(f0, dtype=jnp.float64)
+    else:
+        mask0 = (k_ext <= float(f0_kmax))
+        nhead = int(min(5, int(k_ext.shape[0])))
+        f0 = jnp.where(
+            jnp.any(mask0),
+            jnp.sum(jnp.where(mask0, fk_ext, 0.0)) / jnp.maximum(jnp.sum(mask0), 1),
+            jnp.mean(fk_ext[:nhead]),
+        )
 
     # static (cosmology-independent) pieces: precomputed (jit path) or built here.
     if static_ctx is None:
