@@ -73,6 +73,9 @@ def Rescaling_MG(
     gamma_a,
     t_k,
     d_s,
+    mu_kinf_BZmass=1.0,
+    lambda_a_BZmass=0.0,
+    lambda_dS_BZmass=0.0,
     neutrino_correction=None,
     f0_kmax=1e-3,
 ):
@@ -120,6 +123,9 @@ def Rescaling_MG(
             model=str(model), mg_variant=str(mg_variant),
             mu0=float(mu0),
             beta_1=float(beta_1), lambda_1=float(lambda_1), exp_s=float(exp_s),
+            mu_kinf_BZmass=float(mu_kinf_BZmass),
+            lambda_a_BZmass=float(lambda_a_BZmass),
+            lambda_dS_BZmass=float(lambda_dS_BZmass),
             mu1=float(mu1), mu2=float(mu2), mu3=float(mu3), mu4=float(mu4),
             z_div=float(z_div), z_TGR=float(z_TGR), z_tw=float(z_tw),
             scale_bins=bool(scale_bins),
@@ -209,6 +215,9 @@ def Kfuncs_to_tables(
     beta_1: float = 1.0,
     lambda_1: float = 1.0,
     exp_s: float = 1.0,
+    mu_kinf_BZmass: float = 1.0,
+    lambda_a_BZmass: float = 0.0,
+    lambda_dS_BZmass: float = 0.0,
     mu1: float = 1.0,
     mu2: float = 1.0,
     mu3: float = 1.0,
@@ -234,10 +243,35 @@ def Kfuncs_to_tables(
     return_kernel_constants=True,
     neutrino_correction=None,
     use_numba: bool = False,
+    fk=None, f0=None,
 ) -> Tuple[Tuple[Any, ...], Tuple[Any, ...]]:
     """
     Return (table_wiggle, table_now) in the A_full=False layout expected by FOLPS.
     Uses fkptjax internal output grid by default (init_data.logk_grid).
+
+    Parameters
+    ----------
+    fk : array or None, default=None
+        Linear growth rate f(k) on the input grid ``k``. ``None`` (default) integrates the
+        growth ODE internally (``fkptjax.ode.DP``), as before. Supply it when ``pk``/``pk_now``
+        come from an emulator or a full Boltzmann solve (e.g. desilike's
+        ``DirectSpectrum2Template``, ``sqrt(P_theta_cb/P_delta_cb)``) that also determines the
+        growth: the ODE and that source are otherwise two independent statements about the same
+        cosmology's growth. Extended to the internal extrapolated grid by edge-clamped
+        interpolation. Mirrors ``Kfuncs_to_tables_jax``'s ``fk`` -- see there for the full SIGN
+        CAVEAT (the internal ODE returns a SIGNED f = D'/D and can go negative in a decaying-mode
+        regime; a caller deriving fk from a spectrum ratio such as sqrt(P_theta/P_delta) can only
+        supply |f|).
+    f0 : float or None, default=None
+        Scale-independent growth rate. ``None`` estimates it from ``fk`` (averaged over
+        ``k <= f0_kmax``, or at the ``k=0.1`` pivot for growth-index models). Pass it explicitly
+        alongside ``fk`` so the two cannot drift apart -- see ``Kfuncs_to_tables_jax``.
+
+        NEUTRINO CAVEAT: ``neutrino_correction`` (above) only corrects the internal ODE
+        (``ModelDerivatives``/``DP``); it has no effect once ``fk`` is supplied externally. This
+        is fine when ``fk`` already comes from a full Boltzmann solve on the same
+        (massive-neutrino) cosmology, since that already captures the cb growth suppression the
+        internal correction approximates -- but the two are redundant, not additive, if combined.
     """
 
     import folps as folpsv2
@@ -267,6 +301,9 @@ def Kfuncs_to_tables(
         model=str(model), mg_variant=str(mg_variant) if mg_variant is not None else "mu_OmDE",
         mu0=float(mu0),
         beta_1=float(beta_1), lambda_1=float(lambda_1), exp_s=float(exp_s),
+        mu_kinf_BZmass=float(mu_kinf_BZmass),
+        lambda_a_BZmass=float(lambda_a_BZmass),
+        lambda_dS_BZmass=float(lambda_dS_BZmass),
         mu1=float(mu1), mu2=float(mu2), mu3=float(mu3), mu4=float(mu4),
         z_div=float(z_div), z_TGR=float(z_TGR), z_tw=float(z_tw),
         scale_bins=bool(scale_bins), k_TGR=float(k_TGR), k_S=float(k_S), k_c=float(k_c), k_tw=float(k_tw),
@@ -278,12 +315,22 @@ def Kfuncs_to_tables(
         # use_numba=bool(use_numba),
     )
 
-    k_ext_np = np.asarray(k_ext, dtype=float)
-
-    Y = DP(k_ext_np, derivs, solver)
-    D_ext, Dp_ext = Y[0], Y[1]
-
-    fk_ext = jnp.asarray(Dp_ext / D_ext)
+    if fk is None:
+        k_ext_np = np.asarray(k_ext, dtype=float)
+        Y = DP(k_ext_np, derivs, solver)
+        D_ext, Dp_ext = Y[0], Y[1]
+        fk_ext = jnp.asarray(Dp_ext / D_ext)
+    else:
+        # fk arrives on the INPUT grid `k`; lift it to the extrapolated grid the same way
+        # Kfuncs_to_tables_jax does: jnp.interp (edge-clamped), not extrapolate_pklin (which
+        # fits a power law -- right for P(k), wrong for f(k), which tends to f0 as k -> 0 and
+        # stays bounded and smooth at high k).
+        fk_in_arr = jnp.asarray(fk, dtype=jnp.float64)
+        if fk_in_arr.shape != jnp.asarray(k).shape:
+            raise ValueError(
+                f"fk must have the same shape as k; got {fk_in_arr.shape} vs "
+                f"{jnp.asarray(k).shape}")
+        fk_ext = jnp.interp(k_ext, jnp.asarray(k), fk_in_arr)
 
     # Define the kernel grid range before estimating f0.
     # If f0_kmax is not explicitly provided, use the routine's kmin.
@@ -292,25 +339,30 @@ def Kfuncs_to_tables(
     if kmax is None:
         kmax = float(jnp.maximum(0.5, jnp.max(k)))
 
-    # For growth-index models f(k, z) is scale-independent by construction
-    # (up to optional scale-dependent corrections).  Use the conventional
-    # pivot k = 0.1 h/Mpc instead of the low-k average used for scale-dependent
-    # MG models.  Keep the old f0_kmax averaging for all other models.
-    if model_u in ("GROWTH_INDEX", "GROWTHINDEX"):
-        f0_jax = interp(jnp.asarray([0.1]), k_ext, fk_ext)[0]
+    if f0 is not None:
+        # Take the caller's f0 verbatim: the estimator below is a DIFFERENT definition (an
+        # average of fk_ext, or a fixed-k0 pivot) that would silently drift from the caller's.
+        f0 = float(f0)
     else:
-        if f0_kmax is None:
-            f0_kmax = float(kmin)
+        # For growth-index models f(k, z) is scale-independent by construction
+        # (up to optional scale-dependent corrections).  Use the conventional
+        # pivot k = 0.1 h/Mpc instead of the low-k average used for scale-dependent
+        # MG models.  Keep the old f0_kmax averaging for all other models.
+        if model_u in ("GROWTH_INDEX", "GROWTHINDEX"):
+            f0_jax = interp(jnp.asarray([0.1]), k_ext, fk_ext)[0]
+        else:
+            if f0_kmax is None:
+                f0_kmax = float(kmin)
 
-        mask0 = (k_ext <= float(f0_kmax))
-        nhead = int(min(5, int(k_ext.shape[0])))
-        f0_jax = jnp.where(
-            jnp.any(mask0),
-            jnp.sum(jnp.where(mask0, fk_ext, 0.0)) / jnp.maximum(jnp.sum(mask0), 1),
-            jnp.mean(fk_ext[:nhead]),
-        )
+            mask0 = (k_ext <= float(f0_kmax))
+            nhead = int(min(5, int(k_ext.shape[0])))
+            f0_jax = jnp.where(
+                jnp.any(mask0),
+                jnp.sum(jnp.where(mask0, fk_ext, 0.0)) / jnp.maximum(jnp.sum(mask0), 1),
+                jnp.mean(fk_ext[:nhead]),
+            )
 
-    f0 = float(f0_jax)
+        f0 = float(f0_jax)
 
     if bool(rescale_PS):
         pk_ext, pk_now_ext = Rescaling_MG(
@@ -332,6 +384,9 @@ def Kfuncs_to_tables(
             beta_1=beta_1,
             lambda_1=lambda_1,
             exp_s=exp_s,
+            mu_kinf_BZmass=mu_kinf_BZmass,
+            lambda_a_BZmass=lambda_a_BZmass,
+            lambda_dS_BZmass=lambda_dS_BZmass,
             mu1=mu1,
             mu2=mu2,
             mu3=mu3,

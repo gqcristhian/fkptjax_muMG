@@ -24,10 +24,15 @@ class ModelDerivatives:
 
     We also have the following models:
     - LCDM: here we fix mu(a,k) = 1
-    - HDKI: This models consist of 3 variants at this point
+    - HDKI: This models consist of 4 variants at this point
     i) mg_variant: "mu_OmDE" --- mu(a) = 1 + mu_0 * Omega_DE/Omega_Lambda
     i) mg_variant: "BZ" --- Bertschinger-Zukin parameterization.
     iii) mg_variant: "binning" --- binnings in redshift and scale for mu.
+    iv) mg_variant: "BZ_Mass" --- mass-scale variant of the Bertschinger-Zukin mu
+    parameterization: mu(a,k) = (1 + mu_kinf_BZmass * X) / (1 + X), with
+    X = (k * lambda_a_BZmass * lambda_dS_BZmass / (D(a) * a))^2 and
+    D(a) = lambda_dS_BZmass * a^-3 + lambda_a_BZmass. GR is recovered when
+    mu_kinf_BZmass -> 1, or in the lambda_a_BZmass, lambda_dS_BZmass -> 0 limit.
 
     References
     ----------
@@ -70,6 +75,10 @@ class ModelDerivatives:
         beta_1: float = 1.0,
         lambda_1: float = 1.0,
         exp_s: float = 1.0,
+        # --- HDKI: BZ_Mass
+        mu_kinf_BZmass: float = 1.0,
+        lambda_a_BZmass: float = 0.0,
+        lambda_dS_BZmass: float = 0.0,
         # --- PHENOM: binning
         mu1: float = 1.0,
         mu2: float = 1.0,
@@ -161,6 +170,11 @@ class ModelDerivatives:
         self.lambda_1 = float(lambda_1)
         self.exp_s = float(exp_s)
 
+        # HDKI: BZ_Mass
+        self.mu_kinf_BZmass = float(mu_kinf_BZmass)
+        self.lambda_a_BZmass = float(lambda_a_BZmass)
+        self.lambda_dS_BZmass = float(lambda_dS_BZmass)
+
         # PHENOM: binning
         self.mu1 = float(mu1)
         self.mu2 = float(mu2)
@@ -240,6 +254,7 @@ class ModelDerivatives:
         Scale-dependent examples:
           - Hu-Sawicki / f(R)
           - HDKI + BZ
+          - HDKI + BZ_Mass
           - HDKI + EFT_DE in general
           - PHENOM/binning when scale_bins=True
           - growth-index variants only when the optional k-transition is active
@@ -257,6 +272,8 @@ class ModelDerivatives:
             if variant in ("mu_omde", "muomde"):
                 return False
             if variant == "bz":
+                return True
+            if variant in ("bz_mass", "bzmass"):
                 return True
             if variant in ("eft_de", "eftde"):
                 return self.is_EFTDE_scale_dependent
@@ -378,7 +395,7 @@ class ModelDerivatives:
           - model='LCDM' (or 'GR'): μ = 1
           - model='HS'            : Hu-Sawicki f(R)
           - model='NDGP'          : nDGP braneworld
-          - model='HDKI'          : Horndeski, with mg_variant in {'mu_OmDE', 'BZ', 'EFT_DE'}
+          - model='HDKI'          : Horndeski, with mg_variant in {'mu_OmDE', 'BZ', 'BZ_Mass', 'EFT_DE'}
           - model='PHENOM'        : phenomenological parameterizations, with
                                     mg_variant in {'binning', 'growth_index', 'growth_index_yukawa'}
 
@@ -453,6 +470,9 @@ class ModelDerivatives:
         # HDKI parameterizations
         #   - mu_OmDE: 1 + mu0 * Omega_DE(a)/Omega_Lambda
         #   - BZ:      (1 + beta1 * x) / (1 + x), x = lambda1^2 a^s k^2
+        #   - BZ_Mass: (1 + mu_kinf_BZmass * X) / (1 + X),
+        #              X = (k * lambda_a_BZmass * lambda_dS_BZmass / (D(a) * a))^2,
+        #              D(a) = lambda_dS_BZmass * a^-3 + lambda_a_BZmass
         #   - EFT_DE:  EFTCAMB Horndeski μ(k,eta) from h1/h3/h5 interpolators
         # ------------------------------------------------------------
         if model == "HDKI":
@@ -466,6 +486,16 @@ class ModelDerivatives:
             if v == "bz":
                 x = np.power(self.lambda_1, 2.0) * k2 * np.power(a, self.exp_s)
                 return (1.0 + self.beta_1 * x) / (1.0 + x)
+
+            if v in ("bz_mass", "bzmass"):
+                D = self.lambda_dS_BZmass * np.power(a, -3.0) + self.lambda_a_BZmass
+                D_safe = np.where(D != 0.0, D, 1.0)
+                X = np.where(
+                    D != 0.0,
+                    np.square(k * self.lambda_a_BZmass * self.lambda_dS_BZmass / (D_safe * a)),
+                    0.0,
+                )
+                return (1.0 + self.mu_kinf_BZmass * X) / (1.0 + X)
 
             if v in ("eft_de", "eftde"):
                 if (
@@ -488,7 +518,7 @@ class ModelDerivatives:
 
             raise ValueError(
                 f"Unknown HDKI mg_variant={v!r} "
-                "(expected 'mu_OmDE', 'BZ', or 'EFT_DE')"
+                "(expected 'mu_OmDE', 'BZ', 'BZ_Mass', or 'EFT_DE')"
             )
 
         # ------------------------------------------------------------
