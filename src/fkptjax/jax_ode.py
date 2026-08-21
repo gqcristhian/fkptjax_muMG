@@ -3,7 +3,7 @@ jax_ode.py
 ----------
 JAX (jit/vmap-able) growth and kernel-constant ODE solves for the PHENOM/binning
 modified-gravity model, using ``diffrax`` adaptive integration with the JAX RHS
-in :mod:`binning_jax`.  These replace the pure-Python RKQS solves
+in :mod:`mg_jax`.  These replace the pure-Python RKQS solves
 (``ode.DP`` / ``ode.kernel_constants``) in the JAX backend of
 ``Kfuncs_to_tables`` -- they reproduce the same ODE system and initial conditions,
 so the physics matches the numpy path to the ODE tolerance.
@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 import diffrax
 
-from . import binning_jax as bj
+from . import mg_jax as bj
 
 
 # Default adaptive tolerances.  Validated: the JAX solve is fully converged here
