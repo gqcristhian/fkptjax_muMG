@@ -590,6 +590,22 @@ def build_jax_static_ctx(k, *, kmin, kmax, Nk_kernel, nquadSteps, NQ, NR,
                 kout=jnp.asarray(init_data.logk_grid), p=p, j0=j0, j2=j2)
 
 
+def _resolve_mg_kind(model, mg_variant):
+    """Map desilike's (model, mg_variant) onto an :data:`fkptjax.mg_jax.KINDS` value."""
+    from fkptjax import mg_jax as _mg
+
+    model_u = str(model or '').strip().upper()
+    variant_u = str(mg_variant or '').strip().upper()
+    if model_u == 'PHENOM' and variant_u == 'BINNING':
+        return _mg.BINNING
+    if model_u == 'HDKI' and variant_u in ('BZ_MASS', 'BZMASS'):
+        return _mg.BZ_MASS
+    raise NotImplementedError(
+        f"Kfuncs_to_tables_jax has no JAX right-hand side for model={model!r}, "
+        f"mg_variant={mg_variant!r}; supported: PHENOM/binning, HDKI/BZ_Mass. "
+        "Use the eager Kfuncs_to_tables for the others.")
+
+
 def Kfuncs_to_tables_jax(
     k, pk, pk_now, *, z, Om, beyond_eds=True,
     kmin=None, kmax=None, Nk_kernel=120, nquadSteps=300, NQ=10, NR=10,
@@ -600,9 +616,14 @@ def Kfuncs_to_tables_jax(
     rbao=104.0, pmax_bao=0.4, Np_bao=100,
     return_kernel_constants=True, static_ctx=None,
     fk=None, f0=None,
+    model='PHENOM', mg_variant='binning',
+    mu_kinf_BZmass=1.0, lambda_a_BZmass=0.0, lambda_dS_BZmass=0.0,
 ):
-    """Fully jax-traceable (jit/vmap-able) ``Kfuncs_to_tables`` for the
-    PHENOM/binning model.
+    """Fully jax-traceable (jit/vmap-able) ``Kfuncs_to_tables``.
+
+    Supports ``model='PHENOM', mg_variant='binning'`` (the default, and the
+    historical behaviour) and ``model='HDKI', mg_variant='BZ_Mass'``.  ``model``
+    and ``mg_variant`` are STATIC: they choose which mu expression is traced.
 
     Same physics/outputs as :func:`Kfuncs_to_tables`, but the growth and
     beyond-EdS kernel ODEs are integrated with diffrax (``fkptjax.jax_ode``) on
@@ -645,19 +666,23 @@ def Kfuncs_to_tables_jax(
     from folps.tools_jax import extrapolate_pklin, simpson, interp
     from fkptjax.calculate_jax import JaxCalculator
     from fkptjax.util import setup_kfunctions
-    from fkptjax import binning_jax as _bj
+    from fkptjax import mg_jax as _bj
     from fkptjax.jax_ode import DP_jax, kernel_constants_jax
 
     k = jnp.asarray(k); pk = jnp.asarray(pk); pk_now = jnp.asarray(pk_now)
     k_ext, pk_ext = extrapolate_pklin(k, pk)
     _, pk_now_ext = extrapolate_pklin(k, pk_now)
 
-    # binning constants (Om and mu* may be traced); xstop concrete (z is a float).
+    # MG constants (Om and the MG parameters may be traced); xstop concrete (z is a
+    # float).  ``kind`` is STATIC -- it selects which model's mu is traced at all; see
+    # mg_jax's module docstring for why that is a Python branch and not a jnp.where.
+    kind = _resolve_mg_kind(model, mg_variant)
     P = _bj.pack_constants_jnp(
-        om=Om, ol=1.0 - Om,
+        om=Om, ol=1.0 - Om, kind=kind,
         mu1=mu1, mu2=mu2, mu3=mu3, mu4=mu4,
         z_div=z_div, z_TGR=z_TGR, z_tw=z_tw, scale_bins=scale_bins,
-        k_TGR=k_TGR, k_c=k_c, k_S=k_S, k_tw=k_tw)
+        k_TGR=k_TGR, k_c=k_c, k_S=k_S, k_tw=k_tw,
+        mu_kinf=mu_kinf_BZmass, lambda_a=lambda_a_BZmass, lambda_dS=lambda_dS_BZmass)
     xstop = float(np.log(1.0 / (1.0 + float(z))))
 
     # growth: either integrate the binned-mu ODE, or take f(k) from the caller.
