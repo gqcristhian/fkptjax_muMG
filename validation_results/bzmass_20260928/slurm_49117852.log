@@ -1,0 +1,55 @@
+Jax plugin configuration error: Exception when calling jax_plugins.xla_cuda12.initialize()
+Traceback (most recent call last):
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax/_src/xla_bridge.py", line 497, in discover_pjrt_plugins
+    plugin_module.initialize()
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 348, in initialize
+    _check_cuda_versions(raise_on_first_error=True)
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 274, in _check_cuda_versions
+    for d in range(cuda_versions.cuda_device_count())
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: jaxlib/cuda/versions_helpers.cc:126: operation cuInit(0) failed: Unknown CUDA error 303; cuGetErrorName failed. This probably means that JAX was unable to load the CUDA libraries.
+/n/home12/cgarciaquintero/DESI/src/Triumvirate/src/triumvirate/winconv.py:89: ExperimentalWarning: The `triumvirate.winconv` module is currently experimental. Its behaviour has not been fully tested and may change in the future.
+  warnings.warn(
+⚠️ JAX is using CPU. Devices: [CpuDevice(id=0)]
+Traceback (most recent call last):
+  File "/n/home12/cgarciaquintero/DESI/src/cosmoprimo/cosmoprimo/camb.py", line 214, in compute
+    self.ba = self.th = self.camb.get_background(self._camb_params, no_thermo=False)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/home12/cgarciaquintero/DESI/src/ISiTGR/isitgr/camb.py", line 76, in get_background
+    res.calc_background(params)
+  File "/n/home12/cgarciaquintero/DESI/src/ISiTGR/isitgr/results.py", line 339, in calc_background
+    config.check_global_error("calc_background")
+  File "/n/home12/cgarciaquintero/DESI/src/ISiTGR/isitgr/_config.py", line 50, in check_global_error
+    raise CAMBError(reference + "%s" % err)
+isitgr.baseconfig.CAMBError: Error in Fortran called from calc_background:
+Nu_mass_fractions do not add up to 1
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/n/home12/cgarciaquintero/DESI/src/fkptjax_muMG/examples/validate_bzmass_pipeline.py", line 214, in <module>
+    report=check_tables(args.output,args.nquad) if args.stage=='tables' else globals()['check_'+args.stage](args.output)
+                                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/home12/cgarciaquintero/DESI/src/fkptjax_muMG/examples/validate_bzmass_pipeline.py", line 182, in check_pipeline
+    pipe=build(theory)
+         ^^^^^^^^^^^^^
+  File "/n/home12/cgarciaquintero/DESI/src/desilike/desilike/base.py", line 2401, in build
+    ctx = _build_graph(root)
+          ^^^^^^^^^^^^^^^^^^
+  File "/n/home12/cgarciaquintero/DESI/src/desilike/desilike/base.py", line 2488, in _build_graph
+    node.__post_init__(*args, **kwargs)
+  File "/n/home12/cgarciaquintero/DESI/src/desilike/desilike/theories/galaxy_clustering/template.py", line 804, in __post_init__
+    self._rs_drag_fid = float(self._fiducial.rs_drag)
+                              ^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/home12/cgarciaquintero/DESI/src/cosmoprimo/cosmoprimo/cosmology.py", line 1955, in __getattr__
+    section = getattr(self._engine, 'get_{}'.format(section_name))()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/home12/cgarciaquintero/DESI/src/cosmoprimo/cosmoprimo/cosmology.py", line 785, in getter
+    self._sections[name] = self._Sections[name](self)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/home12/cgarciaquintero/DESI/src/cosmoprimo/cosmoprimo/camb.py", line 461, in __init__
+    self._engine.compute('thermodynamics')
+  File "/n/home12/cgarciaquintero/DESI/src/cosmoprimo/cosmoprimo/camb.py", line 244, in compute
+    raise CosmologyInputError from exc
+cosmoprimo.cosmology.CosmologyInputError
+srun: error: holy8a24101: task 0: Exited with exit code 1

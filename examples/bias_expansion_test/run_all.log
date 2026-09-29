@@ -1,0 +1,151 @@
+
+=== F4 (fR0_HS=1e-04) ===
+  k_MG(z_eff) ~ 0.0378 h/Mpc
+Jax plugin configuration error: Exception when calling jax_plugins.xla_cuda12.initialize()
+Traceback (most recent call last):
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax/_src/xla_bridge.py", line 497, in discover_pjrt_plugins
+    plugin_module.initialize()
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 348, in initialize
+    _check_cuda_versions(raise_on_first_error=True)
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 274, in _check_cuda_versions
+    for d in range(cuda_versions.cuda_device_count())
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: jaxlib/cuda/versions_helpers.cc:126: operation cuInit(0) failed: Unknown CUDA error 303; cuGetErrorName failed. This probably means that JAX was unable to load the CUDA libraries.
+/n/home12/cgarciaquintero/DESI/src/Triumvirate/src/triumvirate/winconv.py:89: ExperimentalWarning: The `triumvirate.winconv` module is currently experimental. Its behaviour has not been fully tested and may change in the future.
+  warnings.warn(
+⚠️ JAX is using CPU. Devices: [CpuDevice(id=0)]
+  built growth/bias/linear-P/full-kernel/toy in 199.8s
+/n/home12/cgarciaquintero/DESI/src/fkptjax_muMG/examples/bias_expansion_test/make_plots.py:100: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+  fig.tight_layout()
+  done in 203.2s
+
+=== F5 (fR0_HS=1e-05) ===
+  k_MG(z_eff) ~ 0.1195 h/Mpc
+  built growth/bias/linear-P/full-kernel/toy in 156.6s
+  done in 159.8s
+
+=== F6 (fR0_HS=1e-06) ===
+  k_MG(z_eff) ~ 0.3778 h/Mpc
+  built growth/bias/linear-P/full-kernel/toy in 156.5s
+  done in 159.9s
+
+=== Summary ===
+{
+  "F4": {
+    "fR0_HS": 0.0001,
+    "k_MG": 0.037776176893160415,
+    "max_delta_b1_over_b1": {
+      "1.0": 0.017313008688857472,
+      "2.0": 0.030622632816868684,
+      "3.0": 0.035477038861484754,
+      "5.0": 0.037169526864816525
+    },
+    "max_frac_delta_P_ell": {
+      "1.0": {
+        "0": 0.008706363955306915,
+        "2": 0.004675444712965414,
+        "4": 7.611792441938248e-15
+      },
+      "2.0": {
+        "0": 0.013234613487390537,
+        "2": 0.007155344006334314,
+        "4": 9.536414221107144e-15
+      },
+      "3.0": {
+        "0": 0.01417354603078926,
+        "2": 0.007667211920788524,
+        "4": 7.282352677936364e-15
+      },
+      "5.0": {
+        "0": 0.014387020230481174,
+        "2": 0.007783668923276997,
+        "4": 4.6815124358162346e-15
+      }
+    },
+    "max_raw_significance_sigma": {
+      "0": 4.081997878127291,
+      "2": 0.4455834527599603,
+      "4": 5.592779295792188e-15
+    },
+    "elapsed_seconds": 203.19031763076782
+  },
+  "F5": {
+    "fR0_HS": 1e-05,
+    "k_MG": 0.11945876027581011,
+    "max_delta_b1_over_b1": {
+      "1.0": 0.010446663572318085,
+      "2.0": 0.01572199431025852,
+      "3.0": 0.016721039990124975,
+      "5.0": 0.01694116539864569
+    },
+    "max_frac_delta_P_ell": {
+      "1.0": {
+        "0": 0.002164909454938704,
+        "2": 0.0011334988082533327,
+        "4": 4.125833384787174e-15
+      },
+      "2.0": {
+        "0": 0.0030558362266475576,
+        "2": 0.001619960211623744,
+        "4": 8.32355714164796e-15
+      },
+      "3.0": {
+        "0": 0.003202653175721472,
+        "2": 0.0016981515347339684,
+        "4": 3.938244445157591e-15
+      },
+      "5.0": {
+        "0": 0.0032332163196133017,
+        "2": 0.001714432958572642,
+        "4": 6.700407334673425e-15
+      }
+    },
+    "max_raw_significance_sigma": {
+      "0": 1.6710619351165232,
+      "2": 0.17597107363653378,
+      "4": 3.2246043368162094e-15
+    },
+    "elapsed_seconds": 159.8224105834961
+  },
+  "F6": {
+    "fR0_HS": 1e-06,
+    "k_MG": 0.3777617689316042,
+    "max_delta_b1_over_b1": {
+      "1.0": 0.002435642100708494,
+      "2.0": 0.0032904065148514996,
+      "3.0": 0.0034080316242451523,
+      "5.0": 0.0034315502372364768
+    },
+    "max_frac_delta_P_ell": {
+      "1.0": {
+        "0": 0.00035211560968520544,
+        "2": 0.000178634614101416,
+        "4": 1.2024681330368755e-14
+      },
+      "2.0": {
+        "0": 0.00047551105425445186,
+        "2": 0.0002413246584324777,
+        "4": 5.419349151732398e-15
+      },
+      "3.0": {
+        "0": 0.0004924844838565456,
+        "2": 0.0002499515071879121,
+        "4": 4.382450197865606e-15
+      },
+      "5.0": {
+        "0": 0.0004958780372033056,
+        "2": 0.00025167640689902597,
+        "4": 9.196613879165185e-15
+      }
+    },
+    "max_raw_significance_sigma": {
+      "0": 0.3210117426498458,
+      "2": 0.031806707777497986,
+      "4": 5.886286771483045e-15
+    },
+    "elapsed_seconds": 159.85263800621033
+  }
+}
+
+Saved numeric outputs to outputs/ and figures to figures/
+NOTE: nuisance-only and MG-parameter refits (spec Sec. 9-10) are deferred -- see README.md.

@@ -1,0 +1,49 @@
+fkptjax vs sMGPT cross-check -- I1udd1-family kernels at a SINGLE (k,q,x) point (no loop integral)
+====================================================================================================
+
+How to use:
+1. Go to cloud.wolframcloud.com, sign in (or create a free Wolfram ID).
+2. Click "Create New" -> "Notebook".
+3. Paste everything below the line of ='s into a single input cell.
+4. Press Shift+Enter to evaluate. This does only 3 ODE solves (no quadrature
+   loop at all), should take a few seconds.
+5. Copy ALL the printed output and paste it back to Claude.
+
+This checks every intermediate quantity (A_Q/A_R/A_N, F2/G2 for each
+ordering, and all 15 combined tA_ij/a_ij/A_ij kernels) at ONE hand-picked
+(k_ext, q, x) triple for the genuinely scale-dependent HDKI/BZ_Mass model
+(mu_kinf=1.2, lambda_a=lambda_dS=100, Om=0.315192, z=0.295) -- no
+integration/quadrature involved, so there's no domain-clipping or
+resolution question at all, just raw formula evaluation, directly
+comparable term-by-term against fkptjax's own MG_kernels.A_B_grid output at
+the exact same triple.
+
+====================================================================================================
+
+om = 0.315192; lambdaA = 100.0; lambdaDS = 100.0; muKinf = 1.2; z = 0.295; etaini = -6.0; etaev = Log[1./(1. + z)];
+mu[eta_, kk_] := Module[{a, Dd, X}, a = Exp[eta]; Dd = lambdaDS*a^(-3) + lambdaA; X = (kk*lambdaA*lambdaDS/(Dd*a))^2; (1 + muKinf*X)/(1 + X)];
+f1[eta_] := 2. - 3./(2.(1. + (1. - om)/om Exp[3. eta]));
+f2[eta_] := 3./(2.(1. + (1. - om)/om Exp[3. eta]));
+growthF[kk_?NumericQ] := Module[{sol}, sol = NDSolve[{Dv''[eta] + f1[eta] Dv'[eta] - f2[eta] mu[eta, kk] Dv[eta] == 0, Dv[etaini] == Exp[etaini], Dv'[etaini] == Exp[etaini]}, Dv, {eta, etaini, etaev}, MaxSteps -> Infinity, AccuracyGoal -> 12, PrecisionGoal -> 12]; {Dv[etaev], Dv'[etaev]} /. sol[[1]]];
+sourceA[kf_, k1_, k2_, eta_] := f2[eta]*(mu[eta, kf] + (mu[eta, kf] - mu[eta, k1])*(kf^2 - k1^2 - k2^2)/(2*k2^2) + (mu[eta, kf] - mu[eta, k2])*(kf^2 - k1^2 - k2^2)/(2*k1^2));
+sourceb[kf_, k1_, k2_, eta_] := f2[eta]*(mu[eta, k1] + mu[eta, k2] - mu[eta, kf]);
+D2plusi = 3. Exp[2. etaini]/7.; dD2plusi = 6. Exp[2. etaini]/7.;
+solveABfull[kf_?NumericQ, k1_?NumericQ, k2_?NumericQ] := Module[{sol, Dpk1v, dDpk1v, Dpk2v, dDpk2v, Afv, dAfv, Bfv, dBfv, C, Cp}, sol = NDSolve[{Dpk1''[eta] + f1[eta] Dpk1'[eta] - f2[eta] mu[eta, k1] Dpk1[eta] == 0, Dpk2''[eta] + f1[eta] Dpk2'[eta] - f2[eta] mu[eta, k2] Dpk2[eta] == 0, Af''[eta] + f1[eta] Af'[eta] - f2[eta] mu[eta, kf] Af[eta] == sourceA[kf, k1, k2, eta] Dpk1[eta] Dpk2[eta], Bf''[eta] + f1[eta] Bf'[eta] - f2[eta] mu[eta, kf] Bf[eta] == sourceb[kf, k1, k2, eta] Dpk1[eta] Dpk2[eta], Dpk1[etaini] == Exp[etaini], Dpk1'[etaini] == Exp[etaini], Dpk2[etaini] == Exp[etaini], Dpk2'[etaini] == Exp[etaini], Af[etaini] == D2plusi, Af'[etaini] == dD2plusi, Bf[etaini] == D2plusi, Bf'[etaini] == dD2plusi}, {Dpk1, Dpk2, Af, Bf}, {eta, etaini, etaev}, MaxSteps -> Infinity, AccuracyGoal -> 12, PrecisionGoal -> 12]; Dpk1v = Dpk1[etaev] /. sol[[1]]; dDpk1v = Dpk1'[etaev] /. sol[[1]]; Dpk2v = Dpk2[etaev] /. sol[[1]]; dDpk2v = Dpk2'[etaev] /. sol[[1]]; Afv = Af[etaev] /. sol[[1]]; dAfv = Af'[etaev] /. sol[[1]]; Bfv = Bf[etaev] /. sol[[1]]; dBfv = Bf'[etaev] /. sol[[1]]; C = (3./7.) Dpk1v Dpk2v; Cp = (3./7.) (dDpk1v Dpk2v + Dpk1v dDpk2v); {Afv/C, Bfv/C, dAfv/C - Afv Cp/C^2, dBfv/C - Bfv Cp/C^2}];
+kext = 0.18205642; q = 0.05; x = 0.3; y = Sqrt[1. + (q/kext)^2 - 2. (q/kext) x]; kminus = kext*y; r = q/kext;
+Print["k_ext=", kext, "  q=", q, "  x=", x]; Print["r=", r, "  y=", y, "  kminus=", kminus];
+{D0v, dD0v} = growthF[0.000001]; f0 = dD0v/D0v; {Dkv, dDkv} = growthF[kext]; fk = dDkv/Dkv; {Dpv, dDpv} = growthF[q]; fp = dDpv/Dpv; {Dkmv, dDkmv} = growthF[kminus]; fkm = dDkmv/Dkmv;
+Print["f0=", f0, "  fk=", fk, "  fp=", fp, "  fkm=", fkm];
+{AQ, BQ, ApQ, BpQ} = solveABfull[kext, q, kminus]; Print["Q ordering: A_Q=", AQ, " B_Q=", BQ, " Ap_Q=", ApQ, " Bp_Q=", BpQ];
+{AR, BR, ApR, BpR} = solveABfull[kminus, kext, q]; Print["R ordering: A_R=", AR, " B_R=", BR, " Ap_R=", ApR, " Bp_R=", BpR];
+{AN, BN, ApN, BpN} = solveABfull[q, kext, kminus]; Print["N ordering: A_N=", AN, " B_N=", BN, " Ap_N=", ApN, " Bp_N=", BpN];
+r2 = r^2; x2 = x^2; y2 = y^2; rx = r x;
+AngleEvQ = (x - r)/y; F2evQ = 0.5 + 3./14. AQ + (0.5 - 3./14. BQ) AngleEvQ^2 + AngleEvQ/2. (y/r + r/y); G2evQ = 3./14. AQ (fp + fkm) + 3./14. ApQ + (0.5 (fp + fkm) - 3./14. BQ (fp + fkm) - 3./14. BpQ) AngleEvQ^2 + AngleEvQ/2. (fkm y/r + fp r/y);
+Print["AngleEvQ=", AngleEvQ, "  F2evQ=", F2evQ, "  G2evQ=", G2evQ];
+AngleEvR = -x; F2evR = 0.5 + 3./14. AR + (0.5 - 3./14. BR) AngleEvR^2 + AngleEvR/2. (1./r + r); G2evR = 3./14. AR (fp + fk) + 3./14. ApR + (0.5 (fp + fk) - 3./14. BR (fp + fk) - 3./14. BpR) AngleEvR^2 + AngleEvR/2. (fk/r + fp r);
+Print["AngleEvR=", AngleEvR, "  F2evR=", F2evR, "  G2evR=", G2evR];
+AngleEvN = -((1. - rx)/y); F2evN = 0.5 + 3./14. AN + (0.5 - 3./14. BN) AngleEvN^2 + AngleEvN/2. (y + 1./y); G2evN = 3./14. AN (fk + fkm) + 3./14. ApN + (0.5 (fk + fkm) - 3./14. BN (fk + fkm) - 3./14. BpN) AngleEvN^2 + AngleEvN/2. (fkm y + fk/y);
+Print["AngleEvN=", AngleEvN, "  F2evN=", F2evN, "  G2evN=", G2evN];
+tA11 = 2. (fp rx + fkm r2 (1. - rx)/y2) F2evQ; tA12 = -fp fkm r2 (1. - x2)/y2 F2evQ; tA22 = 2. (fp rx + fkm r2 (1. - rx)/y2) G2evQ + fp fkm (r2 (1. - 3. x2) + 2. rx)/y2 F2evQ; tA23 = fp fkm r2 (x2 - 1.)/y2 G2evQ; tA33 = fp fkm (r2 (1. - 3. x2) + 2. rx)/y2 G2evQ;
+a11 = 2. (F2evR rx fp + G2evR r2 (1. - rx)/y2); a12 = -(r2 (1. - x2)/y2) fp G2evR; a22 = ((r2 (1. - 3. x2) + 2. rx)/y2 fp + (2. r2 (1. - rx))/y2 fk) G2evR + 2. rx fk fp F2evR; a23 = r2 (x2 - 1.)/y2 fp fk G2evR; a33 = (r2 (1. - 3. x2) + 2. rx)/y2 fp fk G2evR;
+A11 = 2. (G2evN rx + F2evN r2 (1. - rx)/y2 fkm); A12 = -(r2 (1. - x2)/y2) fkm G2evN; A22 = ((r2 (1. - 3. x2) + 2. rx)/y2 fkm + 2. rx fk) G2evN + (2. r2 (1. - rx))/y2 fkm fk F2evN; A23 = r2 (x2 - 1.)/y2 fkm fk G2evN; A33 = (r2 (1. - 3. x2) + 2. rx)/y2 fkm fk G2evN;
+Print["tA11=", tA11, "  a11=", a11, "  A11=", A11]; Print["tA12=", tA12, "  a12=", a12, "  A12=", A12]; Print["tA22=", tA22, "  a22=", a22, "  A22=", A22]; Print["tA23=", tA23, "  a23=", a23, "  A23=", A23]; Print["tA33=", tA33, "  a33=", a33, "  A33=", A33];

@@ -1,0 +1,16 @@
+/n/home12/cgarciaquintero/DESI/src/Triumvirate/src/triumvirate/winconv.py:89: ExperimentalWarning: The `triumvirate.winconv` module is currently experimental. Its behaviour has not been fully tested and may change in the future.
+  warnings.warn(
+JAX version: 0.9.1  devices: [CudaDevice(id=0)]  backend: gpu
+✅ GPU detected. Using JAX with GPU. Devices: [CudaDevice(id=0)]
+static_ctx build: 28.712s
+Q-grid shape: (120,) quadrature-flattened size: 358800
+
+=== HDKI/mu_OmDE (scale-independent): solver='rk4', n_steps=64 (production call site) ===
+  compile+call1: 4.370s
+  call2: 0.643s
+  call3: 0.643s
+
+=== Hu-Sawicki f(R) (scale-dependent): solver='rk4', n_steps=64 (production call site) ===
+  compile+call1: 7.931s
+  call2: 0.818s
+  call3: 0.818s

@@ -19,6 +19,7 @@ class NumpyCalculator(AbsCalculator):
         self.spline_logk = None
         self.spline_kk = None
         self.spline_y = None
+        self.spline_y_r = None
         # Precomputed Q-function quantities
         self.logk_grid2 = None
         self.dkk = None
@@ -118,6 +119,13 @@ class NumpyCalculator(AbsCalculator):
 
         # R-function trapezoidal integration spacing
         self.dkk_r = self.dkk_reshaped[:-1].reshape(-1, 1, 1)
+
+        # Pre-compute coefficients for interpolating P(k), f(k) at the R-grid's
+        # "kminus" = k*sqrt(1+r_r^2-2 r_r x_r) points -- needed by Gamma2fevR
+        # below (sMGPT's own formula uses the growth rate at kminus, not at
+        # k_ext -- see the Gamma2fevR fix in evaluate()).
+        self.y_r = np.sqrt(self.y2_r)
+        self.spline_y_r = self._init_cubic_spline(self.k_in, self.logk_grid * self.y_r)
 
     def _calc_2nd_derivs(self, x: Float64NDArray, y: Float64NDArray) -> Float64NDArray:
         """Initialize a cubic spline interpolator by precomputing 2nd derivatives."""
@@ -456,6 +464,10 @@ class NumpyCalculator(AbsCalculator):
         fp_r = fkk[1:-1].reshape(-1 , 1, 1)
         psl_r = np.stack((Pkk[1:-1], Pkk_nw[1:-1]), axis=1)[:,:,None] # shape (nquadSteps-2, 2, 1)
 
+        # P(kminus)/f(kminus) -- needed by Gamma2fevR below.
+        _, _, fkminusp_r = self._eval_cubic_spline(Y, Y2, self.spline_y_r).T
+        fkminusp_r = fkminusp_r.T  # shape (NR, nquadSteps-2, 1, Nk)
+
         F2evR = (1.0/2.0 + 3.0/14.0 * A + (1.0/2.0 - 3.0/14.0 * A) * AngleEvR2 +
                  AngleEvR / 2.0 * (1.0/r_r + r_r))
         G2evR = (3.0/14.0 * A * (fp_r + fk) + 3.0/14.0 * ApOverf0 +
@@ -469,12 +481,29 @@ class NumpyCalculator(AbsCalculator):
         wpsl_r = w_r * psl_r
 
         Gamma2evR  = A *(1. - x2_r)
-        Gamma2fevR = A *(1. - x2_r)*(fk + fp_r)/2. + 1./2. * ApOverf0 *(1 - x2_r)
+        # Gamma2fevR: sMGPT's own formula (3_P13type.wl) uses the growth rate
+        # at kminus (the output leg of the underlying D2 solve) here, not at
+        # k_ext -- a from-scratch re-derivation against that source (see
+        # calculate_jax.py's matching fix / .claude/plans/quizzical-mapping-catmull.md)
+        # found this used to read fk (external-k growth) instead of
+        # fkminusp_r, a pre-existing bug.
+        Gamma2fevR = A *(1. - x2_r)*(fkminusp_r + fp_r)/2. + 1./2. * ApOverf0 *(1 - x2_r)
         C3Gamma3  = 2.*5./21. * CFD3  *(1 - x2_r)*(1 - x2_r)/y2_r
-        C3Gamma3f = 2.*5./21. * CFD3p *(1 - x2_r)*(1 - x2_r)/y2_r *(fk + 2 * fp_r)/3.
+        # C3Gamma3f previously carried an extra "(fk+2*fp_r)/3" growth-rate
+        # weighting with no counterpart in sMGPT's C3gamma3fLCDM (3_P13type.wl:
+        # 2*(5/21)*lcdmCFprime*(1-x^2)^2/y^2, no growth-rate factor). Removing
+        # it was confirmed against sMGPT's own reference output (see the
+        # matching fix in calculate_jax.py).
+        C3Gamma3f = 2.*5./21. * CFD3p *(1 - x2_r)*(1 - x2_r)/y2_r
+        # NOTE: the middle term below uses fk (external-k growth), matching
+        # sMGPT's G3K term "1/3*C2*(fk/f0)*(k^2-kpx)/(k^2+p^2-2pkx)*gamma2evR"
+        # (3_P13type.wl) exactly -- this used to read fp_r (loop-q growth), a
+        # pre-existing bug (see calculate_jax.py's matching fix). The OTHER
+        # fp_r below (last term) is correct as-is -- sMGPT's own formula
+        # calls for fp (loop q) there.
         G3K = (
             C3Gamma3f/ 2. + (2 * Gamma2fevR * x_r)/(7. * r_r) - (fk  * x2_r)/(6 * r2_r)
-            + fp_r * Gamma2evR*(1 - r_r * x_r)/(7 * y2_r)
+            + fk * Gamma2evR*(1 - r_r * x_r)/(7 * y2_r)
             - 1./7.*(fp_r * Gamma2evR + 2 *Gamma2fevR) * (1. - x2_r)/y2_r)
         F3K = C3Gamma3/6. - x2_r/(6 * r2_r) + (Gamma2evR * x_r *(1 - r_r * x_r))/(7. *r_r *y2_r)
 

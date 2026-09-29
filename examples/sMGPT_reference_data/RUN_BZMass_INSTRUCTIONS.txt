@@ -1,0 +1,92 @@
+HOW TO GENERATE THE sMGPT BZ_Mass (NoScreen) REFERENCE
+=======================================================
+
+Goal: produce a genuine, screening-free (Sc=0, PTkernels=2) sMGPT reference
+for fkptjax's own HDKI/BZ_Mass model, so we can validate fkptjax's
+fkpt_approximation=False (full, non-squeezed) kernels against it.
+
+This needs to run wherever you have sMGPT + Mathematica/Wolfram available
+(your laptop, or NERSC/Perlmutter). It cannot run on this cluster node
+(no wolframscript/math here).
+
+--------------------------------------------------------------------------
+STEP 1 — Get sMGPT if you don't already have a local clone
+--------------------------------------------------------------------------
+
+    git clone https://github.com/alejandroaviles/sMGPT.git
+    cd sMGPT
+
+--------------------------------------------------------------------------
+STEP 2 — Add the new input file
+--------------------------------------------------------------------------
+
+Copy the file
+
+    0_input_BZMass_BGS.wl
+
+(sitting next to this .txt file, in
+ examples/sMGPT_reference_data/0_input_BZMass_BGS.wl of the fkptjax_muMG
+ repo) into the top level of your sMGPT checkout, alongside
+ 0_input_F5_BGS.wl and 0_input_HDKIa_BGS.wl.
+
+This file defines fkptjax's own HDKI/BZ_Mass mu(a,k) formula:
+
+    mu(a,k) = (1 + mu_kinf * X) / (1 + X)
+    X       = ( k * lambda_a * lambda_dS / (D(a) * a) )^2
+    D(a)    = lambda_dS * a^-3 + lambda_a
+
+with mu_kinf=1.2, lambda_a=100, lambda_dS=100 (Mpc/h), PTkernels=2 (Sc=0,
+screening off), same BGS tracer/bias and same Abacus_pklin_z0.dat input as
+the existing F5/HDKI runs. You do not need to edit anything in it.
+
+--------------------------------------------------------------------------
+STEP 3 — Make sure the input power spectrum is present
+--------------------------------------------------------------------------
+
+Confirm this file exists in your sMGPT checkout (it should already, since
+it's the same input used by the F5/HDKI examples):
+
+    input/Abacus_pklin_z0.dat
+
+--------------------------------------------------------------------------
+STEP 4 — Run it
+--------------------------------------------------------------------------
+
+From the sMGPT project directory:
+
+    wolframscript -file 0_RunAll.wl 0_input_BZMass_BGS.wl
+
+On NERSC/Perlmutter (where Mathematica is exposed as `math` instead):
+
+    math -script 0_RunAll.wl 0_input_BZMass_BGS.wl
+
+This should take roughly the same time as the existing F5 or HDKIa runs.
+
+--------------------------------------------------------------------------
+STEP 5 — Collect the outputs
+--------------------------------------------------------------------------
+
+The run should produce, under outputs/BGS_BZMass/NoScreen/:
+
+    outlogBGS_BZMass_NoScreen.txt
+    AllFunctions_BGS_BZMass_NoScreen.dat
+    AllFunctions_BGS_BZMass_NoScreen_nw.dat
+    multipoles_BGS_BZMass_NoScreen.dat
+
+--------------------------------------------------------------------------
+STEP 6 — Send them back
+--------------------------------------------------------------------------
+
+Either:
+  (a) paste the contents of those 4 files back into the chat, or
+  (b) copy them directly into this repo at
+      examples/sMGPT_reference_data/ (matching the naming already used for
+      the F5 and HDKI NoScreen files), and just tell me they're there.
+
+Once I have them, I'll build the comparison notebook: pre-evolve the z=0
+Abacus P(k) via pure-GR growth to z=0.295, run fkptjax with
+model="HDKI", mg_variant="BZ_Mass", mu_kinf=1.2, lambda_a=100.0,
+lambda_dS=100.0, fkpt_approximation=False, screening=0, and diff the raw
+kernel tables and final P_ell against these sMGPT outputs -- the same
+methodology already used for the F5/Hu-Sawicki validation in
+examples/check_vs_sMGPT_reference.ipynb.

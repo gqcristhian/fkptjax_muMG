@@ -1,0 +1,212 @@
+fkptjax vs sMGPT cross-check -- BZ_Mass full-kernel LOOP INTEGRALS
+=====================================================================
+
+How to use:
+1. Go to cloud.wolframcloud.com, sign in (or create a free Wolfram ID).
+2. Click "Create New" -> "Notebook".
+3. Paste everything below the line of ='s into a single input cell.
+4. Press Shift+Enter to evaluate. This does real numerical loop integration
+   (~320 small ODE solves), so it may take a couple of minutes -- that's
+   expected, just let it run.
+5. Copy ALL the printed output (starting from "=== P22 (Q-loop) ===") and
+   paste it back to Claude.
+
+Self-contained -- no external files, no git clone needed. Unlike the
+earlier snippets (which checked single ODE points), THIS one reproduces
+sMGPT's actual one-loop momentum INTEGRALS (its own
+computeOneKBothExact/computeP13OneK routines, including the exact angular
+clip sMGPT uses for the P22-type loop), for the SAME BZ_Mass model
+(mu_kinf=1.2, lambda_a=lambda_dS=100, Om=0.315192, z=0.295) and a simple
+analytic toy P(k) (2000*(k/0.05)^-1.5*Exp[-(k/0.3)^2] -- chosen only so the
+Wolfram side doesn't need to import a table; this checks the KERNEL/LOOP
+machinery, not the real cosmological P(k)).
+
+I've already computed the same 6 quantities on the fkptjax/Python side
+(fkpt_approximation=False, i.e. the full non-squeezed kernels) at the exact
+same k -- paste your output back and I'll diff them directly.
+
+=====================================================================
+
+(* ===== fkptjax HDKI/BZ_Mass loop-integral cross-check ===== *)
+om = 0.315192; lambdaA = 100.0; lambdaDS = 100.0; muKinf = 1.2;
+z = 0.295; etaini = -6.0; etaev = Log[1./(1. + z)];
+kmin = 0.001; kmax = 1.0;
+k = 0.0545559527; (* matches fkptjax's own internal kernel grid point closest to k=0.05 *)
+Nq = 10; Nx = 8; C2 = 3./7.;
+
+mu[eta_, k_] := Module[{a, Dd, X},
+   a = Exp[eta]; Dd = lambdaDS*a^(-3) + lambdaA;
+   X = (k*lambdaA*lambdaDS/(Dd*a))^2; (1 + muKinf*X)/(1 + X)];
+
+f1[eta_] := 2. - 3./(2.(1. + (1. - om)/om Exp[3. eta]));
+f2[eta_] := 3./(2.(1. + (1. - om)/om Exp[3. eta]));
+
+PSL[kk_] := 2000.0 (kk/0.05)^(-1.5) Exp[-(kk/0.3)^2];
+
+growthF[kk_?NumericQ] := Module[{sol},
+  sol = NDSolve[{Dv''[eta] + f1[eta] Dv'[eta] - f2[eta] mu[eta, kk] Dv[eta] == 0,
+     Dv[etaini] == Exp[etaini], Dv'[etaini] == Exp[etaini]}, Dv, {eta, etaini, etaev},
+    MaxSteps -> Infinity, AccuracyGoal -> 10, PrecisionGoal -> 10];
+  {Dv[etaev], Dv'[etaev]} /. sol[[1]]];
+
+{D0v, dD0v} = growthF[0.000001]; f0 = dD0v/D0v;
+{Dkv, dDkv} = growthF[k]; fk = dDkv/Dkv;
+Print["f0 = ", f0, "   fk = ", fk];
+
+(* --- Q ordering: solveABfull also returns fp=f(k1), fkm=f(k2) for free --- *)
+sourceA[kf_, k1_, k2_, eta_] := f2[eta]*(mu[eta, kf] +
+    (mu[eta, kf] - mu[eta, k1])*(kf^2 - k1^2 - k2^2)/(2*k2^2) +
+    (mu[eta, kf] - mu[eta, k2])*(kf^2 - k1^2 - k2^2)/(2*k1^2));
+sourceb[kf_, k1_, k2_, eta_] := f2[eta]*(mu[eta, k1] + mu[eta, k2] - mu[eta, kf]);
+D2plusi = 3. Exp[2. etaini]/7.; dD2plusi = 6. Exp[2. etaini]/7.;
+
+solveABfull[kf_?NumericQ, k1_?NumericQ, k2_?NumericQ] := Module[
+  {sol, Dpk1v, dDpk1v, Dpk2v, dDpk2v, Afv, dAfv, Bfv, dBfv, C, Cp},
+  sol = NDSolve[{
+     Dpk1''[eta] + f1[eta] Dpk1'[eta] - f2[eta] mu[eta, k1] Dpk1[eta] == 0,
+     Dpk2''[eta] + f1[eta] Dpk2'[eta] - f2[eta] mu[eta, k2] Dpk2[eta] == 0,
+     Af''[eta] + f1[eta] Af'[eta] - f2[eta] mu[eta, kf] Af[eta] == sourceA[kf, k1, k2, eta] Dpk1[eta] Dpk2[eta],
+     Bf''[eta] + f1[eta] Bf'[eta] - f2[eta] mu[eta, kf] Bf[eta] == sourceb[kf, k1, k2, eta] Dpk1[eta] Dpk2[eta],
+     Dpk1[etaini] == Exp[etaini], Dpk1'[etaini] == Exp[etaini],
+     Dpk2[etaini] == Exp[etaini], Dpk2'[etaini] == Exp[etaini],
+     Af[etaini] == D2plusi, Af'[etaini] == dD2plusi,
+     Bf[etaini] == D2plusi, Bf'[etaini] == dD2plusi},
+    {Dpk1, Dpk2, Af, Bf}, {eta, etaini, etaev}, MaxSteps -> Infinity, AccuracyGoal -> 10, PrecisionGoal -> 10];
+  Dpk1v = Dpk1[etaev] /. sol[[1]]; dDpk1v = Dpk1'[etaev] /. sol[[1]];
+  Dpk2v = Dpk2[etaev] /. sol[[1]]; dDpk2v = Dpk2'[etaev] /. sol[[1]];
+  Afv = Af[etaev] /. sol[[1]]; dAfv = Af'[etaev] /. sol[[1]];
+  Bfv = Bf[etaev] /. sol[[1]]; dBfv = Bf'[etaev] /. sol[[1]];
+  C = (3./7.) Dpk1v Dpk2v; Cp = (3./7.) (dDpk1v Dpk2v + Dpk1v dDpk2v);
+  {Afv/C, Bfv/C, dAfv/C - Afv Cp/C^2, dBfv/C - Bfv Cp/C^2, dDpk1v/Dpk1v, dDpk2v/Dpk2v}];
+
+angularSumP22[q_?NumericQ] := Module[
+  {r, rmax, rmin, muMin, muMax, xNodes, wNodes, total, xv, wv, y, kminus,
+   AQ, BQ, ApQ, BpQ, fpQ, fkmQ, AngleEvQ, F2v, G2v},
+  r = q/k; rmax = kmax/k; rmin = kmin/k;
+  muMin = Max[-1., (1. + r^2 - rmax^2)/(2. r)];
+  muMax = If[r >= 0.5, 0.5/r, Min[1., (1. + r^2 - rmin^2)/(2. r)]];
+  {xNodes, wNodes} = Transpose[GaussianQuadratureWeights[Nx, muMin, muMax]];
+  total = {0., 0., 0.};
+  Do[
+   xv = xNodes[[i]]; wv = wNodes[[i]];
+   y = Sqrt[1. + r^2 - 2. r xv];
+   kminus = k y;
+   {AQ, BQ, ApQ, BpQ, fpQ, fkmQ} = solveABfull[k, q, kminus];
+   AngleEvQ = (xv - r)/y;
+   F2v = 0.5 + 3./14. AQ + (0.5 - 3./14. BQ) AngleEvQ^2 + AngleEvQ/2. (y/r + r/y);
+   G2v = 3./14. AQ (fpQ + fkmQ)/f0 + 3./14. ApQ/f0 +
+     (0.5 (fpQ + fkmQ) - 3./14. BQ (fpQ + fkmQ) - 3./14. BpQ) AngleEvQ^2/f0 +
+     AngleEvQ/(2. f0) (fkmQ y/r + fpQ r/y);
+   total += wv PSL[q] PSL[kminus] {2. r^2 F2v^2, 2. r^2 F2v G2v, 2. r^2 G2v^2};
+   , {i, 1, Nx}];
+  q^2 total
+  ];
+
+qGrid = Table[10.^lq, {lq, Log10[kmin], Log10[kmax], (Log10[kmax] - Log10[kmin])/(Nq - 1)}];
+trapzQ[vals_List] := Sum[(vals[[i]] + vals[[i - 1]])/2. (qGrid[[i]] - qGrid[[i - 1]]), {i, 2, Length[qGrid]}];
+
+Print["Computing P22 loop (", Nq*Nx, " ODE solves)..."];
+valsP22 = angularSumP22 /@ qGrid;
+{P22dd, P22du, P22uu} = (1./(2. Pi^2)) trapzQ[valsP22];
+Print[""]; Print["=== P22 (Q-loop) at k=", k, " ==="];
+Print["P22dd=", P22dd, "  P22du=", P22du, "  P22uu=", P22uu];
+
+(* --- R ordering / P13-type --- *)
+sourceD2b[eta_, x_, kk_, p_] := Module[{kp = Sqrt[kk^2 + p^2 + 2 kk p x]},
+   f2[eta] mu[eta, kp] - f2[eta] (mu[eta, kk] + mu[eta, p] - mu[eta, kp]) x^2 +
+    f2[eta] (mu[eta, kp]*(p/kk + kk/p)*x - kk x/p mu[eta, kk] - p x/kk mu[eta, p])];
+
+solveD2fusedFull[x_?NumericQ, kk_?NumericQ, p_?NumericQ] := Module[
+  {sol, Dpkv, dDpkv, Dppv, dDppv, D2v, dD2v, C, Cp, kplusp},
+  kplusp = Sqrt[kk^2 + p^2 + 2 kk p x];
+  sol = NDSolve[{
+     Dpk''[eta] + f1[eta] Dpk'[eta] - f2[eta] mu[eta, kk] Dpk[eta] == 0,
+     Dpp''[eta] + f1[eta] Dpp'[eta] - f2[eta] mu[eta, p] Dpp[eta] == 0,
+     D2f''[eta] + f1[eta] D2f'[eta] - f2[eta] mu[eta, kplusp] D2f[eta] == sourceD2b[eta, x, kk, p] Dpk[eta] Dpp[eta],
+     Dpk[etaini] == Exp[etaini], Dpk'[etaini] == Exp[etaini],
+     Dpp[etaini] == Exp[etaini], Dpp'[etaini] == Exp[etaini],
+     D2f[etaini] == 3. Exp[2. etaini]/7. (1 - x^2), D2f'[etaini] == 6. Exp[2. etaini]/7. (1 - x^2)},
+    {Dpk, Dpp, D2f}, {eta, etaini, etaev}, MaxSteps -> Infinity, AccuracyGoal -> 10, PrecisionGoal -> 10];
+  Dpkv = Dpk[etaev] /. sol[[1]]; dDpkv = Dpk'[etaev] /. sol[[1]];
+  Dppv = Dpp[etaev] /. sol[[1]]; dDppv = Dpp'[etaev] /. sol[[1]];
+  D2v = D2f[etaev] /. sol[[1]]; dD2v = D2f'[etaev] /. sol[[1]];
+  C = (3./7.) Dpkv Dppv; Cp = (3./7.) (dDpkv Dppv + Dpkv dDppv);
+  {D2v/C, dD2v/C - D2v Cp/C^2, dDppv/Dppv}];
+
+kppf[x_, kk_, p_] := Sqrt[kk^2 + p^2 + 2. kk p x];
+src2a[eta_, x_, kk_, p_] := f2[eta] mu[eta, kppf[x, kk, p]];
+src2b[eta_, x_, kk_, p_] := f2[eta] (mu[eta, kk] + mu[eta, p] - mu[eta, kppf[x, kk, p]]);
+src2FL[eta_, x_, kk_, p_] := f2[eta] (mu[eta, kppf[x, kk, p]]*(p/kk + kk/p)*x - kk x/p mu[eta, kk] - p x/kk mu[eta, p]);
+srcD2[eta_, x_, kk_, p_] := src2a[eta, x, kk, p] - src2b[eta, x, kk, p] x^2 + src2FL[eta, x, kk, p];
+
+src3I[eta_, x_, kk_, p_, D2fv_, D2mv_, Dpkv_, Dppv_] :=
+  (f2[eta] (mu[eta, p] + mu[eta, kppf[x, kk, p]] - mu[eta, kk]) D2fv Dppv +
+      srcD2[eta, x, kk, p] Dpkv Dppv Dppv) (1. - x^2)/(1. + (p/kk)^2 + 2 p/kk x) +
+   (f2[eta] (mu[eta, p] + mu[eta, kppf[-x, kk, p]] - mu[eta, kk]) D2mv Dppv +
+      srcD2[eta, -x, kk, p] Dpkv Dppv Dppv) (1. - x^2)/(1. + (p/kk)^2 - 2 p/kk x);
+
+src3IIplus[eta_, x_, kk_, p_, D2fv_, Dpkv_, Dppv_] :=
+  -f2[eta] (mu[eta, p] + mu[eta, kppf[x, kk, p]] - 2 mu[eta, kk]) Dppv (D2fv + Dpkv Dppv x^2) -
+   f2[eta] (mu[eta, kppf[x, kk, p]] - mu[eta, kk]) Dpkv Dppv Dppv -
+   f2[eta] ((mu[eta, kppf[x, kk, p]]*(p/kk + kk/p)*x - kk x/p mu[eta, kk] - p x/kk mu[eta, p])) Dpkv Dppv Dppv;
+src3II[eta_, x_, kk_, p_, D2fv_, D2mv_, Dpkv_, Dppv_] :=
+  src3IIplus[eta, x, kk, p, D2fv, Dpkv, Dppv] + src3IIplus[eta, -x, kk, p, D2mv, Dpkv, Dppv];
+
+srcFL3Plus[eta_, x_, kk_, p_, D2fv_, Dpkv_, Dppv_] :=
+  f2[eta] (((p^2 + p kk x)/(kk^2 + p^2 + 2. p kk x)) (mu[eta, p] - mu[eta, kk]) D2fv Dppv +
+      ((p^2 + p kk x)/p^2) (mu[eta, kppf[x, kk, p]] - mu[eta, kk]) (D2fv Dppv + (1 + x^2) Dpkv Dppv Dppv) +
+      (((p^2 + kk^2) x^2)/p^2 + ((p^2 + kk^2) x)/(p kk)) (mu[eta, kppf[x, kk, p]] - mu[eta, kk]) Dpkv Dppv Dppv);
+srcFL3[eta_, x_, kk_, p_, D2fv_, D2mv_, Dpkv_, Dppv_] :=
+  srcFL3Plus[eta, x, kk, p, D2fv, Dpkv, Dppv] + srcFL3Plus[eta, -x, kk, p, D2mv, Dpkv, Dppv];
+
+solveD3fused[x_?NumericQ, kk_?NumericQ, p_?NumericQ] := Module[
+  {sol, Dpkv, dDpkv, Dppv, dDppv, D3v, dD3v, C, xoneMx2},
+  xoneMx2 = 1 - x^2;
+  sol = NDSolve[{
+     Dpk''[eta] + f1[eta] Dpk'[eta] - f2[eta] mu[eta, kk] Dpk[eta] == 0,
+     Dpp''[eta] + f1[eta] Dpp'[eta] - f2[eta] mu[eta, p] Dpp[eta] == 0,
+     D2f''[eta] + f1[eta] D2f'[eta] - f2[eta] mu[eta, kppf[x, kk, p]] D2f[eta] == srcD2[eta, x, kk, p] Dpk[eta] Dpp[eta],
+     D2m''[eta] + f1[eta] D2m'[eta] - f2[eta] mu[eta, kppf[-x, kk, p]] D2m[eta] == srcD2[eta, -x, kk, p] Dpk[eta] Dpp[eta],
+     D3s''[eta] + f1[eta] D3s'[eta] - f2[eta] mu[eta, kk] D3s[eta] ==
+        src3I[eta, x, kk, p, D2f[eta], D2m[eta], Dpk[eta], Dpp[eta]] +
+        src3II[eta, x, kk, p, D2f[eta], D2m[eta], Dpk[eta], Dpp[eta]] +
+        srcFL3[eta, x, kk, p, D2f[eta], D2m[eta], Dpk[eta], Dpp[eta]],
+     Dpk[etaini] == Exp[etaini], Dpk'[etaini] == Exp[etaini],
+     Dpp[etaini] == Exp[etaini], Dpp'[etaini] == Exp[etaini],
+     D2f[etaini] == 3. Exp[2. etaini]/7. xoneMx2, D2f'[etaini] == 6. Exp[2. etaini]/7. xoneMx2,
+     D2m[etaini] == 3. Exp[2. etaini]/7. xoneMx2, D2m'[etaini] == 6. Exp[2. etaini]/7. xoneMx2,
+     D3s[etaini] == 5./7. Exp[3. etaini]/9. (xoneMx2/(1. + (p/kk)^2 + 2 p/kk x) + xoneMx2/(1. + (p/kk)^2 - 2 p/kk x)) xoneMx2,
+     D3s'[etaini] == 15./7. Exp[3. etaini]/9. (xoneMx2/(1. + (p/kk)^2 + 2 p/kk x) + xoneMx2/(1. + (p/kk)^2 - 2 p/kk x)) xoneMx2},
+    {Dpk, Dpp, D2f, D2m, D3s}, {eta, etaini, etaev}, MaxSteps -> Infinity, AccuracyGoal -> 10, PrecisionGoal -> 10];
+  Dpkv = Dpk[etaev] /. sol[[1]]; Dppv = Dpp[etaev] /. sol[[1]];
+  D3v = D3s[etaev] /. sol[[1]]; dD3v = D3s'[etaev] /. sol[[1]];
+  {D3v/(Dpkv Dppv Dppv), dD3v/(Dpkv Dppv Dppv)/(3 f0)}];
+
+angularSumP13[q_?NumericQ] := Module[
+  {r, xNodes, wNodes, total, xv, wv, gamma2evRv, gamma2evRp, fpP, kminusPlus,
+   Dkm, dDkm, fkmP, gamma2fevRv, C3g, C3gf, F3Kv, G3Kv},
+  r = q/k;
+  {xNodes, wNodes} = Transpose[GaussianQuadratureWeights[Nx, -1., 1.]];
+  total = {0., 0., 0.};
+  Do[
+   xv = xNodes[[i]]; wv = wNodes[[i]];
+   {gamma2evRv, gamma2evRp, fpP} = solveD2fusedFull[-xv, k, q];
+   kminusPlus = k Sqrt[1. + r^2 - 2. r xv];
+   {Dkm, dDkm} = growthF[kminusPlus]; fkmP = dDkm/Dkm;
+   gamma2fevRv = gamma2evRv (fkmP + fpP)/(2. f0) + gamma2evRp/(2. f0);
+   {C3g, C3gf} = solveD3fused[xv, k, q];
+   F3Kv = 1./6. C3g + 1./3. C2 ((k^2 - k q xv) k q xv)/(q^2 (k^2 + q^2 - 2. q k xv)) gamma2evRv - 1./6. k^2/q^2 xv^2;
+   G3Kv = 1./2. C3gf + 2./3. C2 (k xv)/q gamma2fevRv +
+     1./3. C2 fk/f0 (k^2 - k q xv)/(k^2 + q^2 - 2. q k xv) gamma2evRv -
+     1./6. k^2/q^2 xv^2 fk/f0 -
+     1./3. C2 (2 gamma2fevRv + gamma2evRv fpP/f0) (1. - (k xv - q)^2/(k^2 + q^2 - 2. q k xv));
+   total += wv PSL[q] {6. r^2 F3Kv, 3. r^2 G3Kv + 3. r^2 F3Kv fk/f0, 6. r^2 G3Kv fk/f0};
+   , {i, 1, Nx}];
+  total
+  ];
+
+Print[""]; Print["Computing P13 loop (", Nq*Nx, " points, 3 ODE solves each)..."];
+valsP13 = angularSumP13 /@ qGrid;
+{P13dd, P13du, P13uu} = (k^2 PSL[k]/(4. Pi^2)) trapzQ[valsP13];
+Print[""]; Print["=== P13 (R-loop) at k=", k, " ==="];
+Print["P13dd=", P13dd, "  P13du=", P13du, "  P13uu=", P13uu];

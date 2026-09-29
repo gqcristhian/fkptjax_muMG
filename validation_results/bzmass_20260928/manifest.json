@@ -1,0 +1,58 @@
+{
+  "python": "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/bin/python",
+  "versions": {
+    "jax": "0.9.1",
+    "jaxlib": "0.9.1",
+    "numpy": "2.4.6",
+    "scipy": "1.17.1",
+    "diffrax": "0.7.2",
+    "cosmoprimo": "1.0.0",
+    "desilike": "2.0.0",
+    "isitgr": "1.6.5"
+  },
+  "repositories": {
+    "fkptjax_muMG": {
+      "head": "70a01dc820bf56a3e746faa28fb3ae30d4356036",
+      "tracked_changes": " examples/.ipynb_checkpoints/compute_mg_multipoles-checkpoint.ipynb | 1051 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++----\n examples/.ipynb_checkpoints/test_neutrino_kernels-checkpoint.ipynb |  849 ------------------------------------------------------------------------------\n examples/compute_mg_multipoles.ipynb                               |  835 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++---\n examples/standalone_mg_multipoles.npy                              |  Bin 1088 -> 1088 bytes\n src/fkptjax/.ipynb_checkpoints/binning_jax-checkpoint.py           |  207 -------------------\n src/fkptjax/.ipynb_checkpoints/binning_numba-checkpoint.py         |  276 --------------------------\n src/fkptjax/.ipynb_checkpoints/calculate_jax-checkpoint.py         |  800 --------------------------------------------------------------------------\n src/fkptjax/.ipynb_checkpoints/calculate_numpy-checkpoint.py       |  579 -----------------------------------------------------\n src/fkptjax/.ipynb_checkpoints/jax_ode-checkpoint.py               |  127 ------------\n src/fkptjax/.ipynb_checkpoints/kfuncs_to_tables-checkpoint.py      | 1150 ----------------------------------------------------------------------------------------------------------\n src/fkptjax/.ipynb_checkpoints/neutrinos-checkpoint.py             |  162 ---------------\n src/fkptjax/.ipynb_checkpoints/ode-checkpoint.py                   |  278 ++++++++++++++++----------\n src/fkptjax/.ipynb_checkpoints/odeint-checkpoint.py                |  241 -----------------------\n src/fkptjax/.ipynb_checkpoints/pipelines-checkpoint.py             |  431 ----------------------------------------\n src/fkptjax/.ipynb_checkpoints/rsd-checkpoint.py                   |  313 -----------------------------\n src/fkptjax/calculate_jax.py                                       |  413 +++++++++++++++++++++++++++++++-------\n src/fkptjax/calculate_numpy.py                                     |   35 +++-\n src/fkptjax/jax_ode.py                                             |   22 +++\n src/fkptjax/kfuncs_to_tables.py                                    |  538 ++++++++++++++++++++++++++++++++++++++++++--------\n src/fkptjax/mg_jax.py                                              |  405 +++++++++++++++++++++++++++++++++++--\n src/fkptjax/ode.py                                                 |   90 +++++----\n 21 files changed, 3293 insertions(+), 5509 deletions(-)\n"
+    },
+    "desilike": {
+      "head": "cf153007cf243be541d5a82390fa85de88ccee60",
+      "tracked_changes": " desilike/theories/galaxy_clustering/full_shape.py | 333 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++-------------------------------------\n 1 file changed, 234 insertions(+), 99 deletions(-)\n"
+    },
+    "FolpsD": {
+      "head": "1dba630622b52952d22e4a0e314f9f21b461bba6",
+      "tracked_changes": " folps/folps.py | 73 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++-----------------\n 1 file changed, 56 insertions(+), 17 deletions(-)\n"
+    },
+    "cosmoprimo": {
+      "head": "701f498eb936a172b91e0ccbd6f52f1770f7154c",
+      "tracked_changes": " cosmoprimo/camb.py | 4 +++-\n 1 file changed, 3 insertions(+), 1 deletion(-)\n"
+    },
+    "ISiTGR": {
+      "head": "403188037f33a222e106c1730ede10a9f7d2c96c",
+      "tracked_changes": " fortran/equations.f90 | 34 ++++++++++++++++++++++++----------\n 1 file changed, 24 insertions(+), 10 deletions(-)\n"
+    },
+    "sMGPT": {
+      "head": "74782730efe7c4460daf16a12adefabf026f1393",
+      "tracked_changes": " src/4_Together.wl      | 13 +++++++++++--\n src/5_IRResummation.wl |  2 +-\n src/IREFTMultipoles.m  |  7 ++++---\n 3 files changed, 16 insertions(+), 6 deletions(-)\n"
+    }
+  },
+  "sha256": {
+    "desilike/desilike/theories/galaxy_clustering/full_shape.py": "e1b6e8dfb088d3f521a94f681905ccfb1b04d3dd89d0525f0deff4bfb4f55fa9",
+    "FolpsD/folps/folps.py": "473eb128094403981773a87b517c327673af2e893a70edb07065ead9928eeb77",
+    "cosmoprimo/cosmoprimo/isitgr.py": "106ec20f3a7f8ca65b9551111f79138b93a28cf7d6ca46c74706dadeb519164e",
+    "cosmoprimo/cosmoprimo/camb.py": "2f2f6e1ff3d1f6be9147866bc777dc717210077838dffc3e610183c201c8acfc",
+    "ISiTGR/fortran/equations.f90": "2791b36f23d248439dee39a13d9ba7ee91a684119b2db91dc0b59b3633c9935d",
+    "fkptjax_muMG/src/fkptjax/MG_kernels.py": "50453ce529fb1c2f20bdec4a05f5257cb17982e3b2674989e8c9c0d5c46b25a8",
+    "fkptjax_muMG/src/fkptjax/mg_jax.py": "50610cc1491af22746b3d422330f85a4c839171489c00bd912cb4aa59a144b22",
+    "fkptjax_muMG/src/fkptjax/kfuncs_to_tables.py": "80be623e18b7576c26a409b2a0316f97a01976d7f387cdf0015623efcb561a79",
+    "fkptjax_muMG/src/fkptjax/calculate_jax.py": "8a53eba354193eaf1104dd8abe783fddc48d4c09283b1f43570d026b177139d9",
+    "sMGPT/src/IREFTMultipoles.m": "645949b46b76c491e95be8c40621bd5c0eb0de74c3e06b8556890b728653ae91",
+    "sMGPT/src/2_P22type.wl": "0e81234909816325dd60c085234238bb458d4ccf8ec6d89f3ec62b7f45105834",
+    "sMGPT/src/3_P13type.wl": "27b470d96fbc0456ffb13661f85141585ad27c8c47d9efec78ac053f3f060178",
+    "sMGPT/input/temp_pklin_ext_64878.dat": "7363cbbe088826690f9083d41aa09909701a69a5b898d46b0f8e87c11d749ad7",
+    "sMGPT/input/temp_pklin_ext_64878_nw.dat": "81c7975d6287d605136b09d2d92e58ac37e1006ac7ef806f8f8676165fd8ca20",
+    "fkptjax_muMG/examples/sMGPT_reference_data/multipoles_BGS_BZMass_NoScreen.dat": "f903086bfa2c80e5cc7049bbc7320f725c249bcc8ced8b91e29277c84b3c4084",
+    "fkptjax_muMG/examples/sMGPT_reference_data/AllFunctions_BGS_BZMass_NoScreen_nw.dat": "4d618873d9e514a8c4d913ec000a182c1a02510832ef7217d522d4a48525ddeb",
+    "fkptjax_muMG/examples/sMGPT_reference_data/AllFunctions_BGS_BZMass_NoScreen.dat": "0fe655336503ebb930713c9ddc303e7c116eae7e8afa4a025ab37873a50e312d"
+  }
+}

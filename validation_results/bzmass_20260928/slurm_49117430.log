@@ -1,0 +1,172 @@
+Jax plugin configuration error: Exception when calling jax_plugins.xla_cuda12.initialize()
+Traceback (most recent call last):
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax/_src/xla_bridge.py", line 497, in discover_pjrt_plugins
+    plugin_module.initialize()
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 348, in initialize
+    _check_cuda_versions(raise_on_first_error=True)
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 274, in _check_cuda_versions
+    for d in range(cuda_versions.cuda_device_count())
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: jaxlib/cuda/versions_helpers.cc:126: operation cuInit(0) failed: Unknown CUDA error 303; cuGetErrorName failed. This probably means that JAX was unable to load the CUDA libraries.
+/n/home12/cgarciaquintero/DESI/src/Triumvirate/src/triumvirate/winconv.py:89: ExperimentalWarning: The `triumvirate.winconv` module is currently experimental. Its behaviour has not been fully tested and may change in the future.
+  warnings.warn(
+⚠️ JAX is using CPU. Devices: [CpuDevice(id=0)]
+{
+  "seconds": 97.71703505516052,
+  "nquad": 300,
+  "raw_columns": 44,
+  "f0": 0.6826139219049823,
+  "linear": {
+    "max_abs": 0.011233241178501885,
+    "max_rel": 2.078223517216066e-05,
+    "rms_over_ref_rms": 6.293407941556053e-07
+  },
+  "loops": {
+    "P22dd": {
+      "max_abs": 2.1836751831341417,
+      "max_rel": 0.003655370640838702,
+      "rms_over_ref_rms": 0.0013681888501272106
+    },
+    "P22du": {
+      "max_abs": 2.360683370675929,
+      "max_rel": 0.004258485122934072,
+      "rms_over_ref_rms": 0.0014927050151596019
+    },
+    "P22uu": {
+      "max_abs": 2.574126588003992,
+      "max_rel": 0.004491582862589033,
+      "rms_over_ref_rms": 0.0015663355180137357
+    },
+    "P13dd": {
+      "max_abs": 0.40107147796175013,
+      "max_rel": 0.0007179161559959091,
+      "rms_over_ref_rms": 0.0006689844463949238
+    },
+    "P13du": {
+      "max_abs": 0.5284181746851573,
+      "max_rel": 0.0007386766659516778,
+      "rms_over_ref_rms": 0.0006828629075024874
+    },
+    "P13uu": {
+      "max_abs": 0.6799904307092675,
+      "max_rel": 0.0007453971295722307,
+      "rms_over_ref_rms": 0.0006910351849931754
+    },
+    "I1udd1A": {
+      "max_abs": 3.8935786441880964,
+      "max_rel": 0.0055764654920656175,
+      "rms_over_ref_rms": 0.00234043541252034
+    },
+    "I2uud1A": {
+      "max_abs": 0.3280928551242823,
+      "max_rel": 0.0007224444967782005,
+      "rms_over_ref_rms": 0.0006503891061149661
+    },
+    "I2uud2A": {
+      "max_abs": 8.137202360851802,
+      "max_rel": 0.042805557643758665,
+      "rms_over_ref_rms": 0.0046045449668206595
+    },
+    "I3uuu2A": {
+      "max_abs": 0.31717955378945817,
+      "max_rel": 0.0007350016467239922,
+      "rms_over_ref_rms": 0.0006509707699152984
+    },
+    "I3uuu3A": {
+      "max_abs": 4.283675251648816,
+      "max_rel": 0.07217120774222888,
+      "rms_over_ref_rms": 0.006901478868263614
+    },
+    "Pb1b2": {
+      "max_abs": 0.5194117598127548,
+      "max_rel": 0.0035058657241458387,
+      "rms_over_ref_rms": 0.0014522408054036004
+    },
+    "Pb1bs2": {
+      "max_abs": 0.2649342920692348,
+      "max_rel": 0.013339493384443271,
+      "rms_over_ref_rms": 0.005092730201507553
+    },
+    "Pb22": {
+      "max_abs": 0.15765882727578173,
+      "max_rel": 0.0006667417266984952,
+      "rms_over_ref_rms": 0.0006476517457130702
+    },
+    "Pb2s2": {
+      "max_abs": 0.18999098910080647,
+      "max_rel": 0.0006752830471330137,
+      "rms_over_ref_rms": 0.0006488107463450283
+    },
+    "Ps22": {
+      "max_abs": 0.12579255119814547,
+      "max_rel": 0.0007059449964235673,
+      "rms_over_ref_rms": 0.0006494812177570001
+    },
+    "Pb2theta": {
+      "max_abs": 0.5191145009693514,
+      "max_rel": 0.03234650240584401,
+      "rms_over_ref_rms": 0.0032812402301042438
+    },
+    "Pbs2theta": {
+      "max_abs": 0.29377209541605254,
+      "max_rel": 0.015880741409154655,
+      "rms_over_ref_rms": 0.004427662130319799
+    },
+    "sigma32PSL": {
+      "max_abs": 0.47619157517101485,
+      "max_rel": 0.0008832464577584339,
+      "rms_over_ref_rms": 0.0007593260693050934
+    }
+  },
+  "multipoles_vs_official": {
+    "0": {
+      "max_abs": 204.8736863814538,
+      "max_rel": 0.021225893415982917,
+      "rms_over_ref_rms": 0.005028290782919943
+    },
+    "2": {
+      "max_abs": 123.7627351720057,
+      "max_rel": 0.06036889239003903,
+      "rms_over_ref_rms": 0.005917825510650643
+    },
+    "4": {
+      "max_abs": 3.5662511445947302,
+      "max_rel": 0.008651183363214337,
+      "rms_over_ref_rms": 0.0011212654606162745
+    }
+  },
+  "same_assembly": {
+    "0": {
+      "max_abs": 10.578411589334792,
+      "max_rel": 0.0012816405941493555,
+      "rms_over_ref_rms": 9.14620212244488e-05
+    },
+    "2": {
+      "max_abs": 14.22796483550519,
+      "max_rel": 0.006185570011427437,
+      "rms_over_ref_rms": 0.0002849434067457443
+    },
+    "4": {
+      "max_abs": 3.437208183412679,
+      "max_rel": 0.008340755726870729,
+      "rms_over_ref_rms": 0.0011004454433441357
+    }
+  },
+  "reference_assembly": {
+    "0": {
+      "max_abs": 203.15652877448883,
+      "max_rel": 0.020899026956798857,
+      "rms_over_ref_rms": 0.005037206657489718
+    },
+    "2": {
+      "max_abs": 117.78377496406574,
+      "max_rel": 0.0574004332687238,
+      "rms_over_ref_rms": 0.005943654824384959
+    },
+    "4": {
+      "max_abs": 0.2588330322553247,
+      "max_rel": 0.0007251407541156146,
+      "rms_over_ref_rms": 0.00016218180467139184
+    }
+  }
+}

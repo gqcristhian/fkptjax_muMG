@@ -24,10 +24,15 @@ class ModelDerivatives:
 
     We also have the following models:
     - LCDM: here we fix mu(a,k) = 1
-    - HDKI: This models consist of 3 variants at this point
+    - HDKI: This models consist of 4 variants at this point
     i) mg_variant: "mu_OmDE" --- mu(a) = 1 + mu_0 * Omega_DE/Omega_Lambda
     i) mg_variant: "BZ" --- Bertschinger-Zukin parameterization.
     iii) mg_variant: "binning" --- binnings in redshift and scale for mu.
+    iv) mg_variant: "BZ_Mass" --- mass-scale variant of the Bertschinger-Zukin mu
+    parameterization: mu(a,k) = (1 + mu_kinf_BZmass * X) / (1 + X), with
+    X = (k * lambda_a_BZmass * lambda_dS_BZmass / (D(a) * a))^2 and
+    D(a) = lambda_dS_BZmass * a^-3 + lambda_a_BZmass. GR is recovered when
+    mu_kinf_BZmass -> 1, or in the lambda_a_BZmass, lambda_dS_BZmass -> 0 limit.
 
     References
     ----------
@@ -39,6 +44,13 @@ class ModelDerivatives:
     This implementation mirrors the Hu-Sawicky Model functions in csrc/models.c.
     All calculations are performed in conformal time η = ln(a) where a is the scale factor.
     """
+
+    # EFTDE is considered effectively scale-independent only over the DESI
+    # fitting window. In that case its single-scale representative is k=0.1.
+    _EFTDE_K_MIN = 0.01
+    _EFTDE_K_MAX = 0.3
+    _EFTDE_K_PIVOT = 0.1
+    _EFTDE_SCALE_TOL = 0.03
      
     def __init__(
         self,
@@ -63,6 +75,10 @@ class ModelDerivatives:
         beta_1: float = 1.0,
         lambda_1: float = 1.0,
         exp_s: float = 1.0,
+        # --- HDKI: BZ_Mass
+        mu_kinf_BZmass: float = 1.0,
+        lambda_a_BZmass: float = 0.0,
+        lambda_dS_BZmass: float = 0.0,
         # --- PHENOM: binning
         mu1: float = 1.0,
         mu2: float = 1.0,
@@ -77,10 +93,10 @@ class ModelDerivatives:
         k_c: float = 0.1,
         k_tw: float = 0.01,
         # --- PHENOM: growth-index
-        gamma_0: float = 1.0,
+        gamma_0: float = 0.54545,
         gamma_a: float = 0.0,
-        t_k: float = 0.0,
-        d_s: float = 0.0,
+        t_k: float = 1000.0,
+        d_s: float = 0.0001,
         # --- EFTCAMB_HORNDESKI: 1D interpolators over eta=ln(a) for h1, h3, h5
         # These are built from EFTCAMB's get_eft_functions() output.
         # mu(k, eta) = h1(eta) * (1 + k^2 * h5(eta)) / (1 + k^2 * h3(eta))
@@ -154,6 +170,11 @@ class ModelDerivatives:
         self.lambda_1 = float(lambda_1)
         self.exp_s = float(exp_s)
 
+        # HDKI: BZ_Mass
+        self.mu_kinf_BZmass = float(mu_kinf_BZmass)
+        self.lambda_a_BZmass = float(lambda_a_BZmass)
+        self.lambda_dS_BZmass = float(lambda_dS_BZmass)
+
         # PHENOM: binning
         self.mu1 = float(mu1)
         self.mu2 = float(mu2)
@@ -219,6 +240,7 @@ class ModelDerivatives:
         # Internal diagnostic / optimization flag used by the FKPT rescaling
         # branch.  It describes the MG part only; a supplied neutrino_correction
         # still makes the effective Poisson source scale-dependent.
+        self.is_EFTDE_scale_dependent = self._infer_is_EFTDE_scale_dependent()
         self.is_MG_scale_dependent = self._infer_is_MG_scale_dependent()
 
     def _infer_is_MG_scale_dependent(self) -> bool:
@@ -232,6 +254,7 @@ class ModelDerivatives:
         Scale-dependent examples:
           - Hu-Sawicki / f(R)
           - HDKI + BZ
+          - HDKI + BZ_Mass
           - HDKI + EFT_DE in general
           - PHENOM/binning when scale_bins=True
           - growth-index variants only when the optional k-transition is active
@@ -250,28 +273,22 @@ class ModelDerivatives:
                 return False
             if variant == "bz":
                 return True
-            if variant in ("eft_de", "eftde"):
-                # h1*(1+k^2 h5)/(1+k^2 h3) is generally scale-dependent.
+            if variant in ("bz_mass", "bzmass"):
                 return True
+            if variant in ("eft_de", "eftde"):
+                return self.is_EFTDE_scale_dependent
             return True
 
         if model == "PHENOM":
             if variant == "binning":
                 return bool(getattr(self, "scale_bins", False))
             if variant == "growth_index":
-                return (
-                    getattr(self, "d_s", 0.0) is not None
-                    and getattr(self, "t_k", 0.0) is not None
-                    and float(getattr(self, "d_s", 0.0)) > 0.0
-                    and float(getattr(self, "t_k", 0.0)) > 0.0
-                )
+                # Scale-independent: F_k is hardcoded to 1 (see mu_mg above),
+                # matching ISiTGR's equations.f90. t_k, d_s are unused here.
+                return False
             if variant == "growth_index_yukawa":
-                return (
-                    getattr(self, "d_s", 0.0) is not None
-                    and getattr(self, "t_k", 0.0) is not None
-                    and float(getattr(self, "d_s", 0.0)) > 0.0
-                    and float(getattr(self, "t_k", 0.0)) > 0.0
-                )
+                # Always applies the Yukawa-like scale-dependent gate.
+                return True
             return True
 
         return True
@@ -280,6 +297,65 @@ class ModelDerivatives:
     def is_effective_mu_scale_dependent(self) -> bool:
         """Whether the full source mu_MG * mu_nu depends explicitly on k."""
         return bool(self.is_MG_scale_dependent or self.neutrino_correction is not None)
+
+    def _infer_is_EFTDE_scale_dependent(self) -> bool:
+        """Return whether EFTDE mu varies appreciably over DESI scales.
+
+        This is an effective, survey-range classification, not a statement
+        that the model is scale-independent at every k.  We compare the exact
+        EFTDE source over 0.01 <= k <= 0.3 h/Mpc with its value at the
+        representative DESI scale k_pivot = 0.1 h/Mpc.  If the maximum
+        fractional departure exceeds 3% at any sampled time, the model is
+        treated as scale-dependent.
+        """
+        model = str(getattr(self, "model", "")).strip().upper()
+        variant = str(getattr(self, "mg_variant", "")).strip().lower()
+        if model != "HDKI" or variant not in ("eft_de", "eftde"):
+            return False
+
+        if (
+            self.eftcamb_h1_interp is None
+            or self.eftcamb_h3_interp is None
+            or self.eftcamb_h5_interp is None
+        ):
+            return False
+
+        k_pivot = self._EFTDE_K_PIVOT
+        kbins = np.geomspace(self._EFTDE_K_MIN, self._EFTDE_K_MAX, 20)
+        etabins = np.linspace(-4.0, 0.0, 10)
+        k2 = np.square(kbins)
+        k2_pivot = k_pivot**2
+
+        for eta in etabins:
+            h1 = self.eftcamb_h1_interp(eta)
+            h3 = self.eftcamb_h3_interp(eta)
+            h5 = self.eftcamb_h5_interp(eta)
+
+            denom_k = 1.0 + k2 * h3
+            denom_pivot = 1.0 + k2_pivot * h3
+            if (
+                not np.all(np.isfinite([h1, h3, h5]))
+                or not np.all(np.isfinite(denom_k))
+                or not np.isfinite(denom_pivot)
+                or np.any(np.abs(denom_k) < 1.0e-12)
+                or np.abs(denom_pivot) < 1.0e-12
+            ):
+                return True
+
+            mu_k = h1 * (1.0 + k2 * h5) / denom_k
+            mu_pivot = h1 * (1.0 + k2_pivot * h5) / denom_pivot
+
+            if not np.all(np.isfinite(mu_k)) or not np.isfinite(mu_pivot):
+                return True
+
+            normalization = max(np.abs(float(mu_pivot)), 1.0e-12)
+            max_fractional_departure = np.max(
+                np.abs(mu_k - mu_pivot) / normalization
+            )
+            if max_fractional_departure > self._EFTDE_SCALE_TOL:
+                return True
+
+        return False
 
     def _isitgr_k_windows(self, k):
         # Mirrors Fortran ISiTGR_k_windows
@@ -312,7 +388,7 @@ class ModelDerivatives:
           - model='LCDM' (or 'GR'): μ = 1
           - model='HS'            : Hu-Sawicki f(R)
           - model='NDGP'          : nDGP braneworld
-          - model='HDKI'          : Horndeski, with mg_variant in {'mu_OmDE', 'BZ', 'EFT_DE'}
+          - model='HDKI'          : Horndeski, with mg_variant in {'mu_OmDE', 'BZ', 'BZ_Mass', 'EFT_DE'}
           - model='PHENOM'        : phenomenological parameterizations, with
                                     mg_variant in {'binning', 'growth_index', 'growth_index_yukawa'}
 
@@ -387,6 +463,9 @@ class ModelDerivatives:
         # HDKI parameterizations
         #   - mu_OmDE: 1 + mu0 * Omega_DE(a)/Omega_Lambda
         #   - BZ:      (1 + beta1 * x) / (1 + x), x = lambda1^2 a^s k^2
+        #   - BZ_Mass: (1 + mu_kinf_BZmass * X) / (1 + X),
+        #              X = (k * lambda_a_BZmass * lambda_dS_BZmass / (D(a) * a))^2,
+        #              D(a) = lambda_dS_BZmass * a^-3 + lambda_a_BZmass
         #   - EFT_DE:  EFTCAMB Horndeski μ(k,eta) from h1/h3/h5 interpolators
         # ------------------------------------------------------------
         if model == "HDKI":
@@ -401,6 +480,16 @@ class ModelDerivatives:
                 x = np.power(self.lambda_1, 2.0) * k2 * np.power(a, self.exp_s)
                 return (1.0 + self.beta_1 * x) / (1.0 + x)
 
+            if v in ("bz_mass", "bzmass"):
+                D = self.lambda_dS_BZmass * np.power(a, -3.0) + self.lambda_a_BZmass
+                D_safe = np.where(D != 0.0, D, 1.0)
+                X = np.where(
+                    D != 0.0,
+                    np.square(k * self.lambda_a_BZmass * self.lambda_dS_BZmass / (D_safe * a)),
+                    0.0,
+                )
+                return (1.0 + self.mu_kinf_BZmass * X) / (1.0 + X)
+
             if v in ("eft_de", "eftde"):
                 if (
                     self.eftcamb_h1_interp is None
@@ -408,16 +497,21 @@ class ModelDerivatives:
                     or self.eftcamb_h5_interp is None
                 ):
                     return 1.0   # GR fallback
-
                 h1 = self.eftcamb_h1_interp(eta)
                 h3 = self.eftcamb_h3_interp(eta)
                 h5 = self.eftcamb_h5_interp(eta)
+                if self.is_EFTDE_scale_dependent:
+                    return h1 * (1.0 + k2 * h5) / (1.0 + k2 * h3)
 
-                return h1 * (1.0 + k2 * h5) / (1.0 + k2 * h3)
+                # The model is effectively scale-independent over DESI scales.
+                # Use the exact EFTDE source at the representative DESI scale,
+                # rather than its k -> 0 or k -> infinity limit.
+                k2_pivot = self._EFTDE_K_PIVOT**2
+                return h1 * (1.0 + k2_pivot * h5) / (1.0 + k2_pivot * h3)
 
             raise ValueError(
                 f"Unknown HDKI mg_variant={v!r} "
-                "(expected 'mu_OmDE', 'BZ', or 'EFT_DE')"
+                "(expected 'mu_OmDE', 'BZ', 'BZ_Mass', or 'EFT_DE')"
             )
 
         # ------------------------------------------------------------
@@ -464,74 +558,81 @@ class ModelDerivatives:
                     + 0.5 * (1.0 - self.mu4) * T4
                 )
 
-            if v == "growth_index":
-                Ea2 = self.om * a**(-3.0) + self.ol
-                Om = (self.om * a**(-3.0)) / Ea2
+            if v in ("growth_index", "growth_index_yukawa"):
+                # ----------------------------------------------------
+                # ISiTGR growth-index parameterization
+                #
+                # mu(a, k) = 1 + [mu_gamma(a) - 1] F_k(a, k)
+                #
+                # F_k = [k^2 / (k^2 + (t_k * Hconf)^2)]^d_s
+                # Hconf = a H / c, expressed in h / Mpc.
+                # ----------------------------------------------------
 
+                w0 = self.w0
+                wa = self.wa
+
+                # Present-day curvature density. For the usual flat runs,
+                # self.ol = 1 - self.om and therefore ok0 = 0.
+                ok0 = 1.0 - self.om - self.ol
+
+                # CPL dark-energy background:
+                # rho_DE(a) / rho_DE,0
+                de_scaling = (
+                    a**(-3.0 * (1.0 + w0 + wa))
+                    * np.exp(3.0 * wa * (a - 1.0))
+                )
+
+                Ea2 = (
+                    self.om * a**(-3.0)
+                    + ok0 * a**(-2.0)
+                    + self.ol * de_scaling
+                )
+
+                Om = self.om * a**(-3.0) / Ea2
+                Ok = ok0 * a**(-2.0) / Ea2
+                Ode = self.ol * de_scaling / Ea2
+
+                # gamma_* = d gamma / d ln(a)
                 gamma = self.gamma_0 + self.gamma_a * (1.0 - a)
-                gammap = -self.gamma_a * a
-                logOm = np.log(Om)
+                gamma_star = -self.gamma_a * a
+
+                w_de = w0 + wa * (1.0 - a)
 
                 mu_gi = (2.0 / 3.0) * Om**(gamma - 1.0) * (
                     Om**gamma
                     + (2.0 - 3.0 * gamma)
                     + 3.0 * (gamma - 0.5) * Om
-                    + gammap * logOm
+                    + (2.0 * gamma - 1.0) * Ok
+                    + 3.0 * (gamma - 0.5) * (1.0 + w_de) * Ode
+                    + gamma_star * np.log(Om)
                 )
 
-                mu_gi_pivot = (2.0 / 3.0) * Om**(0.545454 - 1.0) * (
-                    Om**0.545454
-                    + (2.0 - 3.0 * 0.545454)
-                    + 3.0 * (0.545454 - 0.5) * Om
-                )
+                if v == "growth_index":
+                    # Plain growth-index: scale-independent mu(a), matching
+                    # ISiTGR's equations.f90 (F_k hardcoded to 1 unless
+                    # ISiTGR_gammaL_yukawa_damping is on). t_k, d_s are
+                    # accepted (CLI/API compatibility) but unused here.
+                    return mu_gi
 
-                aH_over_c = a * np.sqrt(Ea2) / self.invH0
-
-                ds = self.d_s
+                # v == "growth_index_yukawa": apply the Yukawa-like
+                # scale-dependent gate (only variant that uses t_k, d_s).
                 tk = self.t_k
+                ds = self.d_s
 
-                if (ds is None) or (tk is None) or (ds <= 0.0) or (tk <= 0.0):
-                    return mu_gi
+                # Hconf = a H / c in h / Mpc.
+                # invH0 = c / H0 = 2997.92458 Mpc / h.
+                Hconf = a * np.sqrt(Ea2) / self.invH0
 
-                arg = (k - tk * aH_over_c) / ds
-                Fk = 0.5 * (1.0 + np.tanh(arg))
+                k2_local = np.square(k)
+                kc2 = np.square(tk * Hconf)
 
-                return mu_gi_pivot + (mu_gi - mu_gi_pivot) * Fk
+                Fk = (
+                    k2_local
+                    / (k2_local + kc2)
+                )**ds
 
-            if v == "growth_index_yukawa":
-                Ea2 = self.om * a**(-3.0) + self.ol
-                Om = (self.om * a**(-3.0)) / Ea2
-
-                gamma = self.gamma_0 + self.gamma_a * (1.0 - a)
-                gammap = -self.gamma_a * a
-                logOm = np.log(Om)
-
-                mu_gi = (2.0 / 3.0) * Om**(gamma - 1.0) * (
-                    Om**gamma
-                    + (2.0 - 3.0 * gamma)
-                    + 3.0 * (gamma - 0.5) * Om
-                    + gammap * logOm
-                )
-
-                mu_gi_pivot = (2.0 / 3.0) * Om**(0.545454 - 1.0) * (
-                    Om**0.545454
-                    + (2.0 - 3.0 * 0.545454)
-                    + 3.0 * (0.545454 - 0.5) * Om
-                )
-
-                aH_over_c = a * np.sqrt(Ea2) / self.invH0
-
-                n = self.d_s
-                alpha = self.t_k
-
-                if (n is None) or (alpha is None) or (n <= 0.0) or (alpha <= 0.0):
-                    return mu_gi
-
-                kc2 = (alpha * aH_over_c) ** 2
-                kk2 = k * k
-                Fk = (kk2 / (kk2 + kc2)) ** n
-
-                return mu_gi_pivot + (mu_gi - mu_gi_pivot) * Fk
+                # ISiTGR pivots explicitly to exact GR, mu = 1.
+                return 1.0 + (mu_gi - 1.0) * Fk
 
             raise ValueError(f"Unknown PHENOM mg_variant={v!r}")
             
@@ -1234,23 +1335,9 @@ def kernel_constants(
 ) -> Tuple[float, float, float, float]:
     """
     Compute one-loop kernel constants (ALS, AprimeLS, KR1LS, KR1pLS).
-
-    For ordinary models, use the standard ODE-based notebook definitions.
-
-    For EFTCAMB Horndeski models encoded as:
-        model = "HDKI"
-        mg_variant = "EFT_DE"
-
-    use h1(eta) for the large-scale A kernel and dh1/deta for A',
-    while still using the ODE system for KR1LS and KR1pLS.
+    
     """
-    model_u = str(getattr(derivs, "model", "")).upper()
-    variant = str(getattr(derivs, "mg_variant", "")).strip().lower()
 
-    is_eft_de = (
-        model_u == "HDKI"
-        and variant in ("eft_de", "eftde")
-    )
 
     Dk, dDk, Dp, dDp, D2p, dD2p, D2m, dD2m, D3, dD3 = D3v2(
         x, KMIN, KMIN, derivs, solver
@@ -1258,23 +1345,6 @@ def kernel_constants(
 
     KR1LS = (21.0 / 5.0) * D3 / (Dk * Dp * Dp)
     KR1pLS = (21.0 / 5.0) * dD3 / (Dk * Dp * Dp) / (3.0 * f0)
-
-    if is_eft_de:
-        eta_out = solver.xstop
-        h1_interp = getattr(derivs, "eftcamb_h1_interp", None)
-
-        if h1_interp is None:
-            ALS = 1.0
-            AprimeLS = 0.0
-        else:
-            ALS = float(h1_interp(eta_out))
-            deps = 1e-4
-            AprimeLS = float(
-                (h1_interp(eta_out + deps) - h1_interp(eta_out - deps))
-                / (2.0 * deps)
-            )
-
-        return ALS, AprimeLS, KR1LS, KR1pLS
 
     C = (3.0 / 7.0) * Dk * Dp
     Cp = (3.0 / 7.0) * (dDk * Dp + Dk * dDp)
