@@ -185,7 +185,7 @@ def eval_cubic_spline_jax(ya: Array, y2a: Array, x_shape: Tuple[int, ...], idx_l
     return result
 
 
-@partial(jit, static_argnums=(4, 5, 13, 21))
+@partial(jit, static_argnums=(4, 5, 13, 21, 68))
 def _calculate_jax_core(
         Y: Array,
         # Spline matrix factors for computing Y2 (k_in grid structure)
@@ -203,7 +203,26 @@ def _calculate_jax_core(
         r: Array, r2: Array, x: Array, w: Array, x2: Array, y2: Array, y: Array,
         r_r: Array, r2_r: Array, x_r: Array, w_r: Array, x2_r: Array, y2_r: Array, AngleEvR: Array, AngleEvR2: Array, dkk_r: Array,
         kk_grid: Array, logk_grid: Array,
-        A: float, ApOverf0: float, CFD3: float, CFD3p: float, sigma2v: float
+        A: float, ApOverf0: float, CFD3: float, CFD3p: float, sigma2v: float,
+        A_Q: Array, B_Q: Array, ApOverf0_Q: Array, BpOverf0_Q: Array,
+        A_fused_R: Array = None, ApOverf0_fused_R: Array = None,
+        CFD3_R: Array = None, CFD3p_R: Array = None,
+        A_N: Array = None, B_N: Array = None,
+        ApOverf0_N: Array = None, BpOverf0_N: Array = None,
+        # Spline coefficients for interpolating P(k), f(k) at the R-grid's
+        # "kminus" points -- needed unconditionally by Gamma2fevR (P13-loop)
+        # and by the I1udd1-family's N-ordering piece.
+        spline_y_r_shape: Tuple[int, ...] = None, spline_y_r_idx_lo: Array = None,
+        spline_y_r_idx_hi: Array = None, spline_y_r_a: Array = None,
+        spline_y_r_b: Array = None, spline_y_r_a3: Array = None,
+        spline_y_r_b3: Array = None, spline_y_r_h2: Array = None,
+        # "R ordering", evaluated on the Q-loop's clipped grid: grid-shaped
+        # overrides for F2evR_Q/G2evR_Q, from
+        # MG_kernels.A_B_grid(kminus_Q, k_ext, q_Q, ...). None (default) ->
+        # broadcasts the scalar A/ApOverf0 into this ordering too, exactly
+        # like A_Q's own default.
+        A_RQ: Array = None, B_RQ: Array = None,
+        ApOverf0_RQ: Array = None, BpOverf0_RQ: Array = None,
     ) -> Any:
     """Core JAX calculation - all arrays are JAX arrays.
 
@@ -225,6 +244,13 @@ def _calculate_jax_core(
         Y, Y2, spline_logk_shape, spline_logk_idx_lo, spline_logk_idx_hi,
         spline_logk_a, spline_logk_b, spline_logk_a3, spline_logk_b3, spline_logk_h2
     ).T
+
+    # f(k_ext) and P(k_ext) (wiggle/no-wiggle stacked) -- needed early by the
+    # I1udd1-family's genuine three-ordering (Q+R+N) combination below, which
+    # (unlike F2evQ/G2evQ) needs the EXTERNAL leg's own growth rate and power
+    # spectrum, not just the loop-q/kminus ones.
+    fk = fout
+    Pout_stack = jnp.stack([Pout, Pout_nw], axis=0)  # shape (2, Nk)
 
     # Interpolate onto quadrature grid using precomputed coefficients
     Pkk, Pkk_nw, fkk = eval_cubic_spline_jax(
@@ -264,10 +290,15 @@ def _calculate_jax_core(
     fsum = fp + fkmp
 
     S2evQ = AngleEvQ ** 2 - 1.0/3.0
-    F2evQ = (1.0/2.0 + 3.0/14.0 * A + (1.0/2.0 - 3.0/14.0 * A) * AngleEvQ2 +
+    # A_Q/B_Q/ApOverf0_Q/BpOverf0_Q generalize A/A/ApOverf0/ApOverf0: the fkPT
+    # (large-scale) approximation sets caligraphic-A == caligraphic-B, so the
+    # caller passes the same scalar A/ApOverf0 in both slots by default; the
+    # full-kernel path (fkpt_approximation=False) passes genuinely different,
+    # grid-shaped A(k,q) != B(k,q) here instead. See MG_kernels.A_B_grid.
+    F2evQ = (1.0/2.0 + 3.0/14.0 * A_Q + (1.0/2.0 - 3.0/14.0 * B_Q) * AngleEvQ2 +
              AngleEvQ / 2.0 * (y/r + r/y))
-    G2evQ = (3.0/14.0 * A * fsum + 3.0/14.0 * ApOverf0 +
-             (1.0/2.0 * fsum - 3.0/14.0 * A * fsum - 3.0/14.0 * ApOverf0) * AngleEvQ2 +
+    G2evQ = (3.0/14.0 * A_Q * fsum + 3.0/14.0 * ApOverf0_Q +
+             (1.0/2.0 * fsum - 3.0/14.0 * B_Q * fsum - 3.0/14.0 * BpOverf0_Q) * AngleEvQ2 +
              AngleEvQ / 2.0 * (fkmp * y/r + fp * r/y))
 
     # Precompute some temporary expressions that are used multiple times
@@ -304,6 +335,108 @@ def _calculate_jax_core(
     I3uuu3tA_B = jnp.sum(wpsl * (
         fp * fkmp * (r2 * (1.0 - 3.0 * x2) + 2.0 * rx) / y2 * G2evQ
         ), axis=0)
+
+    # ---- Genuine three-ordering (Q+R+N) combination -----------------------
+    # sMGPT's own I1udd1-family (2_P22type.wl's computeOneKBothExact/
+    # AKernelsT) sums THREE orderings -- Q ("tA", output leg k_ext, computed
+    # above), R ("a", output leg kminus) and N ("A", output leg q) -- all
+    # evaluated at this SAME (r,x) point on this SAME clipped Q-loop domain,
+    # weighted as
+    #   Kern_ij = A_ij(N)*P(k)*P(kminus) + tA_ij(Q)*P(q)*P(kminus) + a_ij(R)*P(k)*P(q)
+    # before a SINGLE q-integral. This is now the ONLY route for the
+    # I1udd1-family, for BOTH fkpt_approximation=True and False:
+    # A_RQ/B_RQ/A_N/B_N default to the SAME scalar A/B used by A_Q (exactly
+    # the pattern A_Q_eff already follows a few lines up) when the caller
+    # doesn't supply grid-shaped arrays, so the squeezed path pays no extra
+    # ODE-solve cost -- it just broadcasts the same scalar into all three
+    # legs instead of running the old, separately-discretized "tA + 2a"
+    # shortcut (R-ordering on the UNCLIPPED R-loop/P13-domain, see git
+    # history for that formula). That old shortcut is an identity only in
+    # the squeezed (scalar A=B everywhere) limit -- unifying the domain here
+    # means fkpt_approximation=True/False now agree to solver tolerance for
+    # any scale-independent model (previously only to a resolution-dependent
+    # residual, since the two paths used different quadrature domains), and
+    # fkpt_approximation=False is the genuine sMGPT-matching physics rather
+    # than a second, undocumented approximation for scale-dependent models.
+    A_RQ_eff = A if A_RQ is None else A_RQ
+    B_RQ_eff = A if B_RQ is None else B_RQ
+    ApOverf0_RQ_eff = ApOverf0 if ApOverf0_RQ is None else ApOverf0_RQ
+    BpOverf0_RQ_eff = ApOverf0 if BpOverf0_RQ is None else BpOverf0_RQ
+    A_N_eff = A if A_N is None else A_N
+    B_N_eff = A if B_N is None else B_N
+    ApOverf0_N_eff = ApOverf0 if ApOverf0_N is None else ApOverf0_N
+    BpOverf0_N_eff = ApOverf0 if BpOverf0_N is None else BpOverf0_N
+
+    # "R ordering" (a_ij), evaluated on the Q-loop's OWN (clipped) grid --
+    # sMGPT's Ah[kminus,k_ext,q]: output leg kminus, input legs (k_ext,q).
+    AngleEvR_Q = -x
+    AngleEvR_Q2 = AngleEvR_Q * AngleEvR_Q
+    F2evR_Q = (1.0/2.0 + 3.0/14.0 * A_RQ_eff + (1.0/2.0 - 3.0/14.0 * B_RQ_eff) * AngleEvR_Q2 +
+               AngleEvR_Q / 2.0 * (1.0/r + r))
+    G2evR_Q = (3.0/14.0 * A_RQ_eff * (fp + fk) + 3.0/14.0 * ApOverf0_RQ_eff +
+               (1.0/2.0 * (fp + fk) - 3.0/14.0 * B_RQ_eff * (fp + fk) -
+                3.0/14.0 * BpOverf0_RQ_eff) * AngleEvR_Q2 +
+               AngleEvR_Q / 2.0 * (fk/r + fp*r))
+
+    # "N ordering" (A_ij) -- sMGPT's Ah[q,k_ext,kminus]: output leg q,
+    # input legs (k_ext,kminus).
+    AngleEvN_Q = -((1.0 - rx) / y)
+    AngleEvN_Q2 = AngleEvN_Q * AngleEvN_Q
+    fksum = fk + fkmp
+    F2evN_Q = (1.0/2.0 + 3.0/14.0 * A_N_eff + (1.0/2.0 - 3.0/14.0 * B_N_eff) * AngleEvN_Q2 +
+               AngleEvN_Q / 2.0 * (y + 1.0/y))
+    G2evN_Q = (3.0/14.0 * A_N_eff * fksum + 3.0/14.0 * ApOverf0_N_eff +
+               (1.0/2.0 * fksum - 3.0/14.0 * B_N_eff * fksum - 3.0/14.0 * BpOverf0_N_eff) * AngleEvN_Q2 +
+               AngleEvN_Q / 2.0 * (fkmp*y + fk/y))
+
+    Pout_bcast = Pout_stack[None, None, :, :]  # -> (1,1,2,Nk), broadcasts vs (NQ,nquadSteps-1,{1,2},Nk)
+
+    # a_ij (R-ordering): weight P(k_ext)*P(q) -- no P(kminus), so no
+    # "psl" factor; P(q) is supplied later by trapsumQ's own PSLB.
+    a11 = 2.0 * (F2evR_Q * rx * fp + G2evR_Q * r2 * (1.0 - rx) / y2)
+    a12 = -(r2 * (1.0 - x2) / y2) * fp * G2evR_Q
+    a22 = (((r2 * (1.0 - 3.0*x2) + 2.0*rx)/y2 * fp + (2.0*r2*(1.0 - rx))/y2 * fk) * G2evR_Q
+           + 2.0*rx*fk*fp*F2evR_Q)
+    a23 = r2 * (x2 - 1.0) / y2 * fp * fk * G2evR_Q
+    a33 = (r2 * (1.0 - 3.0*x2) + 2.0*rx) / y2 * fp * fk * G2evR_Q
+
+    # A_ij (N-ordering): weight P(k_ext)*P(kminus) -- carries NO P(q) at
+    # all, unlike every other Q-loop kernel; integrated separately below
+    # via trapsumQ_noPq (no PSLB multiply).
+    A11 = 2.0 * (G2evN_Q * rx + F2evN_Q * r2 * (1.0 - rx) / y2 * fkmp)
+    A12 = -(r2 * (1.0 - x2) / y2) * fkmp * G2evN_Q
+    A22 = (((r2 * (1.0 - 3.0*x2) + 2.0*rx)/y2 * fkmp + 2.0*rx*fk) * G2evN_Q
+           + (2.0*r2*(1.0 - rx))/y2 * fkmp*fk * F2evN_Q)
+    A23 = r2 * (x2 - 1.0) / y2 * fkmp * fk * G2evN_Q
+    A33 = (r2 * (1.0 - 3.0*x2) + 2.0*rx) / y2 * fkmp * fk * G2evN_Q
+
+    # tA_ij (Q-ordering): the exact same raw kernels already summed into
+    # I1udd1tA_B/.../I3uuu3tA_B above (weight P(q)*P(kminus), i.e. wpsl +
+    # trapsumQ's own PSLB) -- repeated here, unsummed, so they can be
+    # combined with a_ij/A_ij point-by-point before the single q-integral,
+    # matching sMGPT's own KernI1udd1/.../KernI3uuu3 exactly.
+    tA11 = 2.0 * (fp * rx + fkmpr2 * (1.0 - rx) / y2) * F2evQ
+    tA12 = -fp * fkmpr2 * (1.0 - x2) / y2 * F2evQ
+    tA22 = (2.0 * (fp * rx + fkmpr2 * (1.0 - rx) / y2) * G2evQ
+            + fp * fkmp * (r2 * (1.0 - 3.0 * x2) + 2.0 * rx) / y2 * F2evQ)
+    tA23 = fp * fkmpr2 * (x2 - 1.0) / y2 * G2evQ
+    tA33 = fp * fkmp * (r2 * (1.0 - 3.0 * x2) + 2.0 * rx) / y2 * G2evQ
+
+    # qr_B: the P(q)-dependent part (tA + a), goes through the ordinary
+    # trapsumQ (below) which supplies P(q) automatically via PSLB.
+    I1udd1_qrN_B = jnp.sum(wpsl * tA11 + w * a11 * Pout_bcast, axis=0)
+    I2uud1_qrN_B = jnp.sum(wpsl * tA12 + w * a12 * Pout_bcast, axis=0)
+    I2uud2_qrN_B = jnp.sum(wpsl * tA22 + w * a22 * Pout_bcast, axis=0)
+    I3uuu2_qrN_B = jnp.sum(wpsl * tA23 + w * a23 * Pout_bcast, axis=0)
+    I3uuu3_qrN_B = jnp.sum(wpsl * tA33 + w * a33 * Pout_bcast, axis=0)
+
+    # n_B: the N-ordering part, carries NO P(q) at all -- integrated
+    # separately via trapsumQ_noPq (below), which skips PSLB.
+    I1udd1_n_B = jnp.sum(wpsl * A11 * Pout_bcast, axis=0)
+    I2uud1_n_B = jnp.sum(wpsl * A12 * Pout_bcast, axis=0)
+    I2uud2_n_B = jnp.sum(wpsl * A22 * Pout_bcast, axis=0)
+    I3uuu2_n_B = jnp.sum(wpsl * A23 * Pout_bcast, axis=0)
+    I3uuu3_n_B = jnp.sum(wpsl * A33 * Pout_bcast, axis=0)
 
     # ========== 7 BpC TERM KERNELS (Q-part, will become D-terms) ==========
 
@@ -417,6 +550,16 @@ def _calculate_jax_core(
         # Compute trapezoidal sum: (B[i-1] + B[i]) * dk[i] for i >= 1, plus B[0] * dk[0]
         return jnp.sum((B[:-1] + B[1:]) * dkk_reshaped[1:], axis=0) + B[0] * dkk_reshaped[0]
 
+    def trapsumQ_noPq(B: Array) -> Array:
+        """Same q-integral as trapsumQ, WITHOUT the automatic P(q)=PSLB factor.
+
+        Used only for the I1udd1-family's N-ordering piece, whose sMGPT
+        weight (P(k_ext)*P(kminus)) carries no P(q) at all -- unlike every
+        other Q-loop kernel here.
+        """
+        B = B * scale_Q
+        return jnp.sum((B[:-1] + B[1:]) * dkk_reshaped[1:], axis=0) + B[0] * dkk_reshaped[0]
+
     P22dd = trapsumQ(P22dd_B)
     P22du = trapsumQ(P22du_B)
     P22uu = trapsumQ(P22uu_B)
@@ -448,8 +591,8 @@ def _calculate_jax_core(
     # R-FUNCTIONS: Also fully vectorized
     # ============================================================================
 
-    # Get f(k) at output k values
-    fk = fout
+    # f(k) at output k values already computed above (see "fk = fout" near the
+    # top) -- needed early by the I1udd1-family combination.
 
     # Use precomputed R-function quantities
     # (r_r, r2_r, x_r, w_r, x2_r, y2_r, AngleEvR, AngleEvR2 are passed as parameters)
@@ -458,23 +601,96 @@ def _calculate_jax_core(
     fp_r = fkk[1:-1].reshape(-1, 1, 1)
     psl_r = jnp.stack((Pkk[1:-1], Pkk_nw[1:-1]), axis=1)[:,:,None] # shape (nquadSteps-2, 2, 1)
 
-    F2evR = (1.0/2.0 + 3.0/14.0 * A + (1.0/2.0 - 3.0/14.0 * A) * AngleEvR2 +
-             AngleEvR / 2.0 * (1.0/r_r + r_r))
-    G2evR = (3.0/14.0 * A * (fp_r + fk) + 3.0/14.0 * ApOverf0 +
-             (1.0/2.0 * (fp_r + fk) - 3.0/14.0 * A * (fp_r + fk) -
-              3.0/14.0 * ApOverf0) * AngleEvR2 +
-             AngleEvR / 2.0 * (fk/r_r + fp_r * r_r))
+    # P(kminus)/f(kminus) on the R grid -- needed unconditionally by Gamma2fevR
+    # below (sMGPT's own formula uses the growth rate at the OUTPUT leg of that
+    # sub-solve, i.e. at kminus, not at k_ext -- see the Gamma2fevR comment),
+    # and reused by the N-ordering block further down when that's active.
+    interp_result_rkm = eval_cubic_spline_jax(
+        Y, Y2, spline_y_r_shape, spline_y_r_idx_lo, spline_y_r_idx_hi,
+        spline_y_r_a, spline_y_r_b, spline_y_r_a3, spline_y_r_b3, spline_y_r_h2
+    )
+    psl_rkm_w, psl_rkm_nw, fkminusp_r = interp_result_rkm.T
+    psl_rkm_w = psl_rkm_w.T
+    psl_rkm_nw = psl_rkm_nw.T
+    fkminusp_r = fkminusp_r.T
+    psl_kminus_r = jnp.concatenate([psl_rkm_w, psl_rkm_nw], axis=2)
 
-    # ========== 5 THREE-POINT CORRELATION FUNCTION KERNELS (R-part) ==========
+    # ========== R-part ==========
     wpsl_r = w_r * psl_r
 
-    Gamma2evR = A * (1.0 - x2_r)
-    Gamma2fevR = A * (1.0 - x2_r) * (fk + fp_r) / 2.0 + 1.0/2.0 * ApOverf0 * (1.0 - x2_r)
-    C3Gamma3 = 2.0 * 5.0/21.0 * CFD3 * (1.0 - x2_r) * (1.0 - x2_r) / y2_r
-    C3Gamma3f = 2.0 * 5.0/21.0 * CFD3p * (1.0 - x2_r) * (1.0 - x2_r) / y2_r * (fk + 2.0 * fp_r) / 3.0
+    # Gamma2evR/Gamma2fevR use the FUSED (caligraphic-A - caligraphic-B x^2)
+    # combination (sMGPT's "AminusBx2"/"gamma2evR"), not a separated A/B
+    # pair -- see MG_kernels.D2_fused_grid.
+    #
+    # The scalar (fkPT) path's "A" is a bare large-scale-limit number (from
+    # kernel_constants, evaluated at x=0 where B*x^2 vanishes so A and
+    # AminusBx2(x=0) coincide); calc_jax reconstructs the angular shape by
+    # hand, multiplying it by (1-x_r^2). A_fused_R (from
+    # MG_kernels.D2_fused_grid), by contrast, IS ALREADY AminusBx2 evaluated
+    # at the genuine x_r -- sMGPT uses it directly, with no extra (1-x_r^2)
+    # multiplication (3_P13type.wl: "gamma2evRv = KAminusBx2"). A from-scratch
+    # re-derivation against that source, cross-checked numerically against an
+    # independent Wolfram evaluation, found the array-valued branch below
+    # previously re-applied that scalar-only reconstruction by mistake.
+    if A_fused_R is None:
+        Gamma2evR = A * (1.0 - x2_r)
+    else:
+        Gamma2evR = A_fused_R
+    if ApOverf0_fused_R is None:
+        Gamma2evR_prime_term = ApOverf0 * (1.0 - x2_r)
+    else:
+        Gamma2evR_prime_term = ApOverf0_fused_R
+    # Gamma2fevR: sMGPT's own formula (3_P13type.wl) is
+    # "gamma2evR*(fkminusp+fp)/(2f0) + gamma2evRprime/(2f0)" -- the growth
+    # rate at the OUTPUT leg of the underlying D2 solve (kminus, since that
+    # solve is called at x=-x_r,k=k_ext,p=q so its output mode is kminus) plus
+    # at the loop q. A from-scratch re-derivation against that source (cross
+    # -checked numerically against an independent Wolfram evaluation) found
+    # this used to read fk (external-k growth) instead of fkminusp_r -- a
+    # pre-existing bug predating this module's fkpt_approximation=False work,
+    # present in the fkPT-approximated path too (masked there since this is a
+    # small, near-constant LS correction).
+    Gamma2fevR = Gamma2evR * (fkminusp_r + fp_r) / 2.0 + Gamma2evR_prime_term / 2.0
+    # C3Gamma3/C3Gamma3f: the scalar (fkPT) path reconstructs the LCDM-shaped
+    # x-dependence by hand (the "(1-x^2)^2/y^2" factor), because CFD3/CFD3p
+    # are single, x-independent large-scale-limit numbers -- that
+    # reconstruction is specific to the LS-approximated shape (sMGPT's own
+    # "C3gamma3LCDM"/"C3gamma3fLCDM" helpers, 3_P13type.wl) and must NOT be
+    # applied to CFD3_R/CFD3p_R (from MG_kernels.D3_fused_grid), which are
+    # already evaluated at the genuine x_r -- their x-dependence (and, for
+    # C3Gamma3, the factor-of-2 normalization difference between the
+    # LS-shape helper and the raw quantity) is already baked into the ODE
+    # solve itself. A from-scratch re-derivation against sMGPT's raw
+    # (non-approximated) F3K/G3K formulas, cross-checked numerically against
+    # an independent Wolfram evaluation, found the array-valued branch below
+    # previously kept the LS-shape-specific factor-of-2 by mistake.
+    #
+    # C3Gamma3f previously also carried an extra "(fk+2*fp_r)/3" growth-rate
+    # weighting that has NO counterpart in sMGPT's C3gamma3fLCDM (verified by
+    # directly comparing against 3_P13type.wl: C3gamma3fLCDM is just
+    # 2*(5/21)*lcdmCFprime*(1-x^2)^2/y^2, no growth-rate factor at all).
+    # Removing it was confirmed against sMGPT's own reference output (their
+    # BGS_F5/fkKernels AllFunctions table): P13dt/P13tt went from ~4-6% off
+    # to <1% agreement, with P13dd (which never had this factor) unaffected.
+    if CFD3_R is None:
+        C3Gamma3 = 2.0 * 5.0/21.0 * CFD3 * (1.0 - x2_r) * (1.0 - x2_r) / y2_r
+    else:
+        C3Gamma3 = 5.0/21.0 * CFD3_R
+    if CFD3p_R is None:
+        C3Gamma3f = 2.0 * 5.0/21.0 * CFD3p * (1.0 - x2_r) * (1.0 - x2_r) / y2_r
+    else:
+        C3Gamma3f = 5.0/21.0 * CFD3p_R
+    # NOTE: the middle term below uses fk (external-k growth), matching sMGPT's
+    # G3K term "1/3*C2*(fk/f0)*(k^2-kpx)/(k^2+p^2-2pkx)*gamma2evR" (3_P13type.wl)
+    # exactly -- a from-scratch re-derivation against that source found this used
+    # to read fp_r (loop-q growth) here, a pre-existing bug predating this
+    # module's fkpt_approximation=False work (present in the fkPT-approximated
+    # path too, just masked there because Gamma2evR/Gamma2fevR are small,
+    # near-constant LS corrections). The OTHER fp_r below (last term) is
+    # correct as-is -- sMGPT's own formula calls for fp (loop q) there.
     G3K = (
         C3Gamma3f / 2.0 + (2.0 * Gamma2fevR * x_r) / (7.0 * r_r) - (fk * x2_r) / (6.0 * r2_r)
-        + fp_r * Gamma2evR * (1.0 - r_r * x_r) / (7.0 * y2_r)
+        + fk * Gamma2evR * (1.0 - r_r * x_r) / (7.0 * y2_r)
         - 1.0/7.0 * (fp_r * Gamma2evR + 2.0 * Gamma2fevR) * (1.0 - x2_r) / y2_r)
     F3K = C3Gamma3 / 6.0 - x2_r / (6.0 * r2_r) + (Gamma2evR * x_r * (1.0 - r_r * x_r)) / (7.0 * r_r * y2_r)
 
@@ -487,31 +703,11 @@ def _calculate_jax_core(
         / (24.0 * y2_r)
     ), axis=0)
 
-    # I1udd1a
-    I1udd1a_B = jnp.sum(wpsl_r * (
-        2.0 * r2_r * (1.0 - r_r * x_r) / y2_r * G2evR + 2.0 * fp_r * r_r * x_r * F2evR
-    ), axis=0)
-
-    # I2uud1a
-    I2uud1a_B = jnp.sum(wpsl_r * (
-        -fp_r * r2_r * (1.0 - x2_r) / y2_r * G2evR
-    ), axis=0)
-
-    # I2uud2a
-    I2uud2a_B = jnp.sum(wpsl_r * (
-        ((r2_r * (1.0 - 3.0 * x2_r) + 2.0 * r_r * x_r) / y2_r * fp_r +
-                fk * 2.0 * r2_r * (1.0 - r_r * x_r) / y2_r) * G2evR + 2.0 * x_r * r_r * fp_r * fk * F2evR
-    ), axis=0)
-
-    # I3uuu2a
-    I3uuu2a_B = jnp.sum(wpsl_r * (
-        -fp_r * r2_r * (1.0 - x2_r) / y2_r * G2evR * fk
-    ), axis=0)
-
-    # I3uuu3a
-    I3uuu3a_B = jnp.sum(wpsl_r * (
-        (r2_r * (1.0 - 3.0 * x2_r) + 2.0 * r_r * x_r) / y2_r * fp_r * fk * G2evR
-    ), axis=0)
+    # psl_kminus_r/fkminusp_r above are still needed unconditionally by
+    # Gamma2fevR. The old R-loop-based I1udd1-family formulas (I1udd1a etc.,
+    # evaluated on this unclipped R-grid) were removed once the I1udd1-family
+    # kernels were unified onto the Q-grid's genuine three-ordering (Q+R+N)
+    # sum below -- see the "Combine Q and R functions" comment.
 
     # Calculate scaling for R-functions
     pkl_k = jnp.stack([Pout, Pout_nw], axis=0)  # shape (2, Nk)
@@ -528,12 +724,6 @@ def _calculate_jax_core(
         # Compute trapezoidal sum: (B[i-1] + B[i]) * dk[i] for i >= 1, plus B[0] * dk[0]
         return jnp.sum((B[:-1] + B[1:]) * dkk_r[1:], axis=0) + B[0] * dkk_r[0]
 
-    I1udd1a = trapsumR(I1udd1a_B)
-    I2uud1a = trapsumR(I2uud1a_B)
-    I2uud2a = trapsumR(I2uud2a_B)
-    I3uuu2a = trapsumR(I3uuu2a_B)
-    I3uuu3a = trapsumR(I3uuu3a_B)
-
     P13uu = trapsumR(P13uu_B)
     P13du = trapsumR(P13du_B)
     P13dd = trapsumR(P13dd_B)
@@ -543,11 +733,23 @@ def _calculate_jax_core(
     # ============================================================================
     # Combine Q and R functions
     # ============================================================================
-    I1udd1A = I1udd1tA + 2.0 * I1udd1a
-    I2uud1A = I2uud1tA + 2.0 * I2uud1a
-    I2uud2A = I2uud2tA + 2.0 * I2uud2a
-    I3uuu2A = I3uuu2tA + 2.0 * I3uuu2a
-    I3uuu3A = I3uuu3tA + 2.0 * I3uuu3a
+    # The I1udd1-family kernels are the genuine three-ordering (Q+R+N) sum,
+    # unconditionally, for both fkpt_approximation=True and False -- see the
+    # "Genuine three-ordering (Q+R+N) combination" comment above for the
+    # formula and why the domain is now unified between the two paths (this
+    # replaced an older "tA + 2x a" shortcut, evaluated on the separate
+    # unclipped R-loop/P13-domain, that was only exact in the squeezed
+    # limit). Two earlier attempts to add a genuine N-ordering term on that
+    # separate R-grid failed the GR-limit exact-match check; the fix that
+    # stuck evaluates R and N on the Q-loop's OWN clipped grid, matching
+    # sMGPT's own computeOneKBothExact/AKernelsT architecture exactly -- see
+    # git history and .claude/plans/quizzical-mapping-catmull.md for that
+    # evidence trail.
+    I1udd1A = trapsumQ(I1udd1_qrN_B) + trapsumQ_noPq(I1udd1_n_B)
+    I2uud1A = trapsumQ(I2uud1_qrN_B) + trapsumQ_noPq(I2uud1_n_B)
+    I2uud2A = trapsumQ(I2uud2_qrN_B) + trapsumQ_noPq(I2uud2_n_B)
+    I3uuu2A = trapsumQ(I3uuu2_qrN_B) + trapsumQ_noPq(I3uuu2_n_B)
+    I3uuu3A = trapsumQ(I3uuu3_qrN_B) + trapsumQ_noPq(I3uuu3_n_B)
 
     # ============================================================================
     # D-TERMS (B + C - G corrections)
@@ -598,6 +800,7 @@ class JaxCalculator(AbsCalculator):
         self.spline_logk = None
         self.spline_kk = None
         self.spline_y = None
+        self.spline_y_r = None
         # Precomputed spline matrix factors for k_in grid (optimization for MCMC)
         self.spline_sig_jax = None
         self.spline_inv_h_jax = None
@@ -712,9 +915,25 @@ class JaxCalculator(AbsCalculator):
         # R-function trapezoidal integration spacing
         self.dkk_r_jax = self.dkk_reshaped_jax[:-1].reshape(-1, 1, 1)
 
+        # Pre-compute coefficients for interpolating P(k), f(k) at the R-grid's
+        # "kminus" = k*sqrt(1+r_r^2-2 r_r x_r) points. Needed only by the
+        # non-fkPT-approximated ("N ordering") bias/RSD kernels -- see
+        # fkptjax.MG_kernels and the AngleEvN/F2evN/G2evN block in
+        # _calculate_jax_core.
+        y_r_jax = jnp.sqrt(self.y2_r_jax)
+        self.spline_y_r = init_cubic_spline_jax(self.k_in_jax, self.logk_grid_jax * y_r_jax)
+
     def evaluate(self, Pk_in: Float64NDArray, Pk_nw_in: Float64NDArray,
                  fk_in: Float64NDArray, A: float, ApOverf0: float, CFD3: float,
-                 CFD3p: float, sigma2v: float, f0: float) -> KFunctionsOut:
+                 CFD3p: float, sigma2v: float, f0: float,
+                 A_Q: Any = None, B_Q: Any = None,
+                 ApOverf0_Q: Any = None, BpOverf0_Q: Any = None,
+                 A_fused_R: Any = None, ApOverf0_fused_R: Any = None,
+                 CFD3_R: Any = None, CFD3p_R: Any = None,
+                 A_N: Any = None, B_N: Any = None,
+                 ApOverf0_N: Any = None, BpOverf0_N: Any = None,
+                 A_RQ: Any = None, B_RQ: Any = None,
+                 ApOverf0_RQ: Any = None, BpOverf0_RQ: Any = None) -> KFunctionsOut:
         """Evaluate k-functions given input power spectra.
 
         Args:
@@ -727,13 +946,46 @@ class JaxCalculator(AbsCalculator):
             CFD3p: Cosmological parameter CFD3p
             sigma2v: Velocity dispersion parameter
             f0: Reference growth rate
+            A_Q, B_Q, ApOverf0_Q, BpOverf0_Q: optional grid-shaped (Q-loop,
+                "Q ordering") overrides for the F2evQ/G2evQ caligraphic-A/-B
+                pieces, e.g. from ``MG_kernels.A_B_grid`` for the
+                non-fkPT-approximated path. Default (``None``) reproduces the
+                fkPT-approximated behavior exactly: ``A_Q=B_Q=A``,
+                ``ApOverf0_Q=BpOverf0_Q=ApOverf0``.
+            A_fused_R, ApOverf0_fused_R: grid-shaped overrides for the FUSED
+                (caligraphic-A - caligraphic-B x^2) combination used by
+                Gamma2evR/Gamma2fevR, from ``MG_kernels.D2_fused_grid``.
+                Default reproduces ``A_fused_R -> A``.
+            CFD3_R, CFD3p_R: grid-shaped overrides for the third-order
+                C3Gamma3/C3Gamma3f pieces, from ``MG_kernels.D3_fused_grid``.
+                Unlike the others, these REPLACE (not multiply into) the
+                scalar-path geometric reconstruction -- see the code comment
+                at their use site.
+            A_N, B_N, ApOverf0_N, BpOverf0_N, A_RQ, B_RQ, ApOverf0_RQ,
+                BpOverf0_RQ: grid-shaped "N ordering" and "R ordering,
+                evaluated on the Q-loop's grid" pieces -- the second and
+                third legs of the I1udd1-family bias/RSD kernels' genuine
+                three-ordering (Q+R+N) sum (mirrors sMGPT's A11..A33), which
+                is now used unconditionally for this kernel family. Default
+                (``None``) broadcasts the scalar ``A``/``ApOverf0`` into
+                these two orderings too, exactly like ``A_Q``'s own default
+                -- i.e. the squeezed (``fkpt_approximation=True``) path pays
+                no extra cost, it just reuses the same scalar for all three
+                legs instead of running a separately-discretized shortcut.
 
         Returns:
             KFunctionsOut containing all computed k-functions (as numpy arrays)
         """
-        # Stack input power spectra and normalize fk by f0
-        Y = np.stack([Pk_in, Pk_nw_in, fk_in / f0], axis=0)
-        Y_jax = jnp.asarray(Y, dtype=jnp.float64)
+        A_Q = A if A_Q is None else A_Q
+        B_Q = A if B_Q is None else B_Q
+        ApOverf0_Q = ApOverf0 if ApOverf0_Q is None else ApOverf0_Q
+        BpOverf0_Q = ApOverf0 if BpOverf0_Q is None else BpOverf0_Q
+
+        # Stack input power spectra and normalize fk by f0. jnp.stack (not np.stack), so this
+        # stays traceable when Pk_in/Pk_nw_in/fk_in/f0 are jax tracers (e.g. under jit with a
+        # beyond_eds=True, fkpt_approximation=False caller supplying both fk/f0 and
+        # ingredients_fn -- see Kfuncs_to_tables's own static_ctx/lazy-derivs handling).
+        Y_jax = jnp.stack([Pk_in, Pk_nw_in, fk_in / f0], axis=0).astype(jnp.float64)
 
         # Run JIT-compiled calculation with all precomputed values
         # Y2 (spline second derivatives) is now computed inside _calculate_jax_core
@@ -761,22 +1013,44 @@ class JaxCalculator(AbsCalculator):
             self.r_r_jax, self.r2_r_jax, self.x_r_jax, self.w_r_jax, self.x2_r_jax, self.y2_r_jax,
             self.AngleEvR_jax, self.AngleEvR2_jax, self.dkk_r_jax,
             self.kk_grid_jax, self.logk_grid_jax,
-            A, ApOverf0, CFD3, CFD3p, sigma2v
+            A, ApOverf0, CFD3, CFD3p, sigma2v,
+            A_Q, B_Q, ApOverf0_Q, BpOverf0_Q,
+            A_fused_R, ApOverf0_fused_R, CFD3_R, CFD3p_R,
+            A_N, B_N, ApOverf0_N, BpOverf0_N,
+            self.spline_y_r['x_shape'], self.spline_y_r['idx_lo_flat'], self.spline_y_r['idx_hi_flat'],
+            self.spline_y_r['a_flat'], self.spline_y_r['b_flat'], self.spline_y_r['a3_flat'],
+            self.spline_y_r['b3_flat'], self.spline_y_r['h2_flat'],
+            A_RQ, B_RQ, ApOverf0_RQ, BpOverf0_RQ,
         )
 
-        # Convert JAX arrays back to numpy arrays
-        results_np = tuple(np.asarray(r) for r in results)
-
-        return KFunctionsOut(*results_np)
+        # NOT converted to numpy (was: tuple(np.asarray(r) for r in results)) -- this is the
+        # last line of evaluate(), so returning the jax arrays as-is keeps this traceable
+        # under jit/vmap when Pk_in/A_Q/etc are tracers; Kfuncs_to_tables's own table assembly
+        # already re-wraps every field in jnp.asarray() regardless (see its `_arr` helper), so
+        # nothing downstream needed these to be numpy specifically.
+        return KFunctionsOut(*results)
 
     def evaluate_jax(self, Pk_in, Pk_nw_in, fk_in, A, ApOverf0, CFD3,
-                     CFD3p, sigma2v, f0):
+                     CFD3p, sigma2v, f0,
+                     A_Q=None, B_Q=None, ApOverf0_Q=None, BpOverf0_Q=None,
+                     A_fused_R=None, ApOverf0_fused_R=None,
+                     CFD3_R=None, CFD3p_R=None,
+                     A_N=None, B_N=None, ApOverf0_N=None, BpOverf0_N=None,
+                     A_RQ=None, B_RQ=None, ApOverf0_RQ=None, BpOverf0_RQ=None):
         """Fully jax-traceable variant of :meth:`evaluate`.
 
         Identical to ``evaluate`` but keeps everything in ``jax.numpy`` (no
         ``np.stack`` on inputs, no ``np.asarray`` on outputs), so it can be
         ``jax.jit`` / ``jax.vmap``'d.  Returns a ``KFunctionsOut`` of JAX arrays.
+
+        See :meth:`evaluate` for all the ``*_Q``/``*_R``/``*_fused_R``/``*_N``
+        overrides.
         """
+        A_Q = A if A_Q is None else A_Q
+        B_Q = A if B_Q is None else B_Q
+        ApOverf0_Q = ApOverf0 if ApOverf0_Q is None else ApOverf0_Q
+        BpOverf0_Q = ApOverf0 if BpOverf0_Q is None else BpOverf0_Q
+
         Y_jax = jnp.stack([Pk_in, Pk_nw_in, fk_in / f0], axis=0).astype(jnp.float64)
         results = _calculate_jax_core(
             Y_jax,
@@ -795,6 +1069,13 @@ class JaxCalculator(AbsCalculator):
             self.r_r_jax, self.r2_r_jax, self.x_r_jax, self.w_r_jax, self.x2_r_jax, self.y2_r_jax,
             self.AngleEvR_jax, self.AngleEvR2_jax, self.dkk_r_jax,
             self.kk_grid_jax, self.logk_grid_jax,
-            A, ApOverf0, CFD3, CFD3p, sigma2v
+            A, ApOverf0, CFD3, CFD3p, sigma2v,
+            A_Q, B_Q, ApOverf0_Q, BpOverf0_Q,
+            A_fused_R, ApOverf0_fused_R, CFD3_R, CFD3p_R,
+            A_N, B_N, ApOverf0_N, BpOverf0_N,
+            self.spline_y_r['x_shape'], self.spline_y_r['idx_lo_flat'], self.spline_y_r['idx_hi_flat'],
+            self.spline_y_r['a_flat'], self.spline_y_r['b_flat'], self.spline_y_r['a3_flat'],
+            self.spline_y_r['b3_flat'], self.spline_y_r['h2_flat'],
+            A_RQ, B_RQ, ApOverf0_RQ, BpOverf0_RQ,
         )
         return KFunctionsOut(*results)

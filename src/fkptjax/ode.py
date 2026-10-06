@@ -283,19 +283,12 @@ class ModelDerivatives:
             if variant == "binning":
                 return bool(getattr(self, "scale_bins", False))
             if variant == "growth_index":
-                return (
-                    getattr(self, "d_s", 0.0) is not None
-                    and getattr(self, "t_k", 0.0) is not None
-                    and float(getattr(self, "d_s", 0.0)) > 0.0
-                    and float(getattr(self, "t_k", 0.0)) > 0.0
-                )
+                # Scale-independent: F_k is hardcoded to 1 (see mu_mg above),
+                # matching ISiTGR's equations.f90. t_k, d_s are unused here.
+                return False
             if variant == "growth_index_yukawa":
-                return (
-                    getattr(self, "d_s", 0.0) is not None
-                    and getattr(self, "t_k", 0.0) is not None
-                    and float(getattr(self, "d_s", 0.0)) > 0.0
-                    and float(getattr(self, "t_k", 0.0)) > 0.0
-                )
+                # Always applies the Yukawa-like scale-dependent gate.
+                return True
             return True
 
         return True
@@ -480,7 +473,12 @@ class ModelDerivatives:
             a = np.exp(eta)
 
             if v in ("mu_omde", "muomde"):
-                OmDE_over_OmL = 1.0 / (self.ol + self.om * np.power(a, -3.0))
+                # Generalized to a w0wa (CPL) dark energy background -- see
+                # _Ea2_de_scaling. OmDE_over_OmL = Omega_DE(a)/Omega_Lambda =
+                # (ol*de_scaling/Ea2)/ol = de_scaling/Ea2, reducing to the pure-LCDM
+                # 1/(ol+om*a^-3) exactly at w0=-1, wa=0 (de_scaling=1).
+                Ea2, de_scaling = self._Ea2_de_scaling(eta)
+                OmDE_over_OmL = de_scaling / Ea2
                 return 1.0 + self.mu0 * OmDE_over_OmL
 
             if v == "bz":
@@ -582,18 +580,7 @@ class ModelDerivatives:
                 # self.ol = 1 - self.om and therefore ok0 = 0.
                 ok0 = 1.0 - self.om - self.ol
 
-                # CPL dark-energy background:
-                # rho_DE(a) / rho_DE,0
-                de_scaling = (
-                    a**(-3.0 * (1.0 + w0 + wa))
-                    * np.exp(3.0 * wa * (a - 1.0))
-                )
-
-                Ea2 = (
-                    self.om * a**(-3.0)
-                    + ok0 * a**(-2.0)
-                    + self.ol * de_scaling
-                )
+                Ea2, de_scaling = self._Ea2_de_scaling(eta)
 
                 Om = self.om * a**(-3.0) / Ea2
                 Ok = ok0 * a**(-2.0) / Ea2
@@ -614,18 +601,17 @@ class ModelDerivatives:
                     + gamma_star * np.log(Om)
                 )
 
+                if v == "growth_index":
+                    # Plain growth-index: scale-independent mu(a), matching
+                    # ISiTGR's equations.f90 (F_k hardcoded to 1 unless
+                    # ISiTGR_gammaL_yukawa_damping is on). t_k, d_s are
+                    # accepted (CLI/API compatibility) but unused here.
+                    return mu_gi
+
+                # v == "growth_index_yukawa": apply the Yukawa-like
+                # scale-dependent gate (only variant that uses t_k, d_s).
                 tk = self.t_k
                 ds = self.d_s
-
-                # No damping requested: use the pure, scale-independent
-                # growth-index mu(a).
-                if (
-                    tk is None
-                    or ds is None
-                    or tk <= 0.0
-                    or ds <= 0.0
-                ):
-                    return mu_gi
 
                 # Hconf = a H / c in h / Mpc.
                 # invH0 = c / H0 = 2997.92458 Mpc / h.
@@ -688,6 +674,28 @@ class ModelDerivatives:
         """
         return self.mu_mg(eta, k) * self.mu_neutrino(eta, k)
 
+    def _Ea2_de_scaling(
+        self, eta: Union[float, Float64NDArray]
+    ) -> tuple:
+        """Generalized w0wa (CPL) dark energy background, shared by every model.
+
+        ``de_scaling(a) = rho_DE(a) / rho_DE(a=1)``, ``Ea2(a) = H(a)^2 / H0^2``. Matches
+        ISiTGR's own DarkEnergyInterface.f90 exactly: ``w_de(a) = w0 + wa*(1-a)`` and
+        ``rho_de(a) propto a**(-3*(1+w0+wa)) * exp(-3*wa*(1-a))`` (the
+        TDarkEnergyEqnOfState_w_de / ``grho_de`` assignment there -- ``exp(3*wa*(a-1))``
+        below is the same factor written the other way). Reduces to plain LCDM
+        (``de_scaling=1``, ``Ea2=om*a^-3+ol``) exactly at ``w0=-1, wa=0``. ``ok0``
+        (curvature) is kept for generality even though this pipeline otherwise assumes
+        flat (``ol = 1-om``).
+        """
+        a = np.exp(eta)
+        w0 = getattr(self, "w0", -1.0)
+        wa = getattr(self, "wa", 0.0)
+        ok0 = 1.0 - self.om - self.ol
+        de_scaling = a**(-3.0 * (1.0 + w0 + wa)) * np.exp(3.0 * wa * (a - 1.0))
+        Ea2 = self.om * a**(-3.0) + ok0 * a**(-2.0) + self.ol * de_scaling
+        return Ea2, de_scaling
+
     def f1(self, eta: Union[float, Float64NDArray]) -> Union[float, Float64NDArray]:
         """Compute logarithmic growth rate f₁(η) = d ln D/d ln a.
 
@@ -699,13 +707,19 @@ class ModelDerivatives:
         Returns
         -------
         float or ndarray
-            Linear growth rate f₁(η) ≈ Ωₘ(η)^0.55 for ΛCDM.
+            (3/2) Omega_m(a), generalized to a w0wa (CPL) dark energy background instead of
+            the pure-LCDM special case -- see _Ea2_de_scaling. Used as the friction/source
+            coefficient in every growth/beyond-EdS kernel-constant ODE below, for every
+            model, regardless of that model's own mu(a,k) formula.
 
         Notes
         -----
-        Implements f1_HS from csrc/models.c. For ΛCDM, f₁ = 3Ωₘ/(2Ωₘ + 2Ωₗa³).
+        Implements f1_HS from csrc/models.c, generalized beyond its original pure-LCDM form.
         """
-        return 3 / (2 * (1 + self.ol / self.om * np.exp(3 * eta)))
+        a = np.exp(eta)
+        Ea2, _ = self._Ea2_de_scaling(eta)
+        Om = self.om * np.power(a, -3.0) / Ea2
+        return 1.5 * Om
 
     def kpp(self, x: Union[float, Float64NDArray], k: Union[float, Float64NDArray], p: Union[float, Float64NDArray]) -> Union[float, Float64NDArray]:
         """Compute magnitude of vector sum |k + p| given k, p, and cosine x = k·p/(kp).

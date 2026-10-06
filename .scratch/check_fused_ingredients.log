@@ -1,0 +1,23 @@
+fused grid 24x16x12= 4608 pts, solve=5.53s: max rel err A_fused=3.887e-02 (median 5.096e-03)  CFD3=3.768e-01 (median 1.969e-02)
+  worst 8 CFD3 cases (k, p, x, rel_err):
+    k=0.1892 p=0.5634 x=-0.9389 rel_err=3.768e-01
+    k=0.3846 p=1.5492 x=+0.5895 rel_err=2.307e-01
+    k=0.0269 p=0.1126 x=+0.6294 rel_err=2.186e-01
+    k=0.0653 p=0.5627 x=-0.1502 rel_err=1.940e-01
+    k=0.0963 p=0.6648 x=-0.4602 rel_err=1.894e-01
+    k=0.0145 p=0.0442 x=+0.9427 rel_err=1.824e-01
+    k=0.3979 p=5.1446 x=-0.4879 rel_err=1.714e-01
+    k=0.0492 p=0.1829 x=+0.3135 rel_err=1.704e-01
+  restricted to |x|<0.7 (34 pts): max=2.307e-01 median=1.722e-02
+fused grid 32x24x16=12288 pts, solve=6.07s: max rel err A_fused=1.802e-02 (median 3.546e-03)  CFD3=3.242e-01 (median 9.205e-03)
+  worst 8 CFD3 cases (k, p, x, rel_err):
+    k=0.1892 p=0.5634 x=-0.9389 rel_err=3.242e-01
+    k=0.0145 p=0.0442 x=+0.9427 rel_err=1.312e-01
+    k=0.0963 p=0.6648 x=-0.4602 rel_err=9.187e-02
+    k=0.3674 p=1.7285 x=-0.4835 rel_err=8.847e-02
+    k=0.0130 p=0.0625 x=-0.7487 rel_err=7.821e-02
+    k=0.0269 p=0.1126 x=+0.6294 rel_err=7.764e-02
+    k=0.3846 p=1.5492 x=+0.5895 rel_err=6.637e-02
+    k=0.0097 p=0.0614 x=-0.0837 rel_err=6.543e-02
+  restricted to |x|<0.7 (34 pts): max=9.187e-02 median=7.825e-03
+DONE

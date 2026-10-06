@@ -1,0 +1,43 @@
+/n/home12/cgarciaquintero/DESI/src/Triumvirate/src/triumvirate/winconv.py:89: ExperimentalWarning: The `triumvirate.winconv` module is currently experimental. Its behaviour has not been fully tested and may change in the future.
+  warnings.warn(
+JAX version: 0.9.1
+JAX devices: [CudaDevice(id=0)]
+JAX default backend: gpu
+
+ISiTGR/CAMB linear P(k): cold=19.162s  warm(repeat-call)=18.513s
+✅ GPU detected. Using JAX with GPU. Devices: [CudaDevice(id=0)]
+fkptjax: static_ctx build (ONE-TIME setup, not per-likelihood-call): 13.603s
+
+EdS: warmup(compile)=8.351s  post-compile total=0.060s
+  fkptjax: kernel_constants_jax (squeezed-limit ODE, beyond_eds only): 0.000s
+  fkptjax (remaining table build/combination):                       0.060s
+  fkptjax: MG_kernels ODE solve (only nonzero for Full):              0.000s
+  folps: RSD/IR-resummation:                                         0.001s
+
+bEdS (fkPT approx.): warmup(compile)=3.542s  post-compile total=0.062s
+  fkptjax: kernel_constants_jax (squeezed-limit ODE, beyond_eds only): 0.004s
+  fkptjax (remaining table build/combination):                       0.058s
+  fkptjax: MG_kernels ODE solve (only nonzero for Full):              0.000s
+  folps: RSD/IR-resummation:                                         0.001s
+
+bEdS (Full): warmup(compile)=6.656s  post-compile total=0.703s
+  fkptjax: kernel_constants_jax (squeezed-limit ODE, beyond_eds only): 0.004s
+  fkptjax (remaining table build/combination):                       0.059s
+  fkptjax: MG_kernels ODE solve (only nonzero for Full):              0.640s
+  folps: RSD/IR-resummation:                                         0.001s
+
+==========================================================================================
+SUMMARY TABLE -- per-likelihood-call time breakdown (seconds), production resolution
+(Boltzmann solver time is amortized separately -- see note below)
+==========================================================================================
+Stage                                                  EdS    bEdS approx    bEdS Full
+--------------------------------------------------------------------------------------
+fkptjax: kernel_constants_jax (squeezed ODE)         0.000        0.004        0.004
+fkptjax: table build / combination (remaining)        0.060        0.058        0.059
+fkptjax: MG_kernels ODE solve (beyond-EdS full)        0.000        0.000        0.640
+folps: RSD/IR-resummation                            0.001        0.001        0.001
+--------------------------------------------------------------------------------------
+TOTAL (post-compile, per-likelihood-call)            0.060        0.062        0.703
+
+Boltzmann solver (ISiTGR/CAMB), same P(k) for all 3 cases: 18.513s (repeat call) -- typically run once per cosmology step, not necessarily every bias/MG-param step depending on your sampler setup.
+One-time fkptjax setup (build_jax_static_ctx, NOT per-call): 13.603s

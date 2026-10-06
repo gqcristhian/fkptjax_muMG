@@ -1,0 +1,68 @@
+FULL-KERNEL VALIDATION HANDOFF -- 2026-09-28
+
+Use ONLY cosmodesi_new:
+/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/bin/python
+Workspace: /n/home12/cgarciaquintero/DESI/src
+Read synthetic/docs/validate_full_kernels.txt for the original issue, then:
+src/fkptjax_muMG/docs/full_kernel_validation_20260928.md
+Results: src/fkptjax_muMG/validation_results/bzmass_20260928/
+
+VERDICT: Full UNSCREENED scale-dependent BZ_Mass kernels agree with sMGPT.
+desilike -> fkptjax/FolpsD/cosmoprimo/ISiTGR now executes all four modes:
+kernel_mode='full', 'fkpt', 'eds', 'eds_fk'. This does NOT certify arbitrary
+screening, curved/w0wa backgrounds, massive neutrinos or trained emulators.
+
+Benchmark: Omega_m=.31519, h=.6736, z=.295, mu_kinf=1.2,
+lambda_a=lambda_dS=100 Mpc/h; sMGPT PTkernels=2 NoScreen.
+At matched 183 radial / 10 angular nodes, max differences vs corrected Wolfram
+P0/P2/P4 are 0.0043%/0.0396%/0.0486% for k=.01-.3 h/Mpc.
+Independent A/B kernels: adaptive absolute error <5.7e-8, RK4/64 <3.1e-7.
+Derivatives <8e-7 absolute; near-zero derivatives invalidate relative bounds.
+D2/D3 pass after applying the reference export's missing 21/5 normalization.
+
+IMPORTANT REFERENCE BUG: sMGPT AllFunctions has 44 columns but header labels43.
+Pbs2b1 is duplicated after column37. Old LegacyColumnOrder=True misassigns
+subsequent bias terms, causing ~2.1% P0 and ~5.7% P2 disagreement.
+Corrected production Wolfram reader default to False and regenerated multipoles
+in the result directory; archived outputs preserved. Fresh Wolfram A/B is
+identical to the archived A/B. Do not validate against the old wrong multipoles.
+
+Changes are UNCOMMITTED. Preserve preexisting user modifications and stashes.
+- desilike/full_shape.py: restored/reconciled missing stash wiring, full loop
+  switch, per-triangle A/B derivatives, MG state/pytree/emulator layout, explicit
+  kernel_mode, compatible tracer damping default, unsupported-model guards.
+- FolpsD/folps/folps.py: Z2 uses each leg's f(k), and f0*G2 (G2 is normalized by
+  f0); callback now reaches Sugiyama and Scoccimarro, including damping setting.
+- cosmoprimo/cosmoprimo/camb.py: zero-mass neutrino fractions sum to one for
+  actual eigenstate count (previous single-species failure).
+- sMGPT/src/IREFTMultipoles.m and 5_IRResummation.wl: corrected reader defaults.
+  sMGPT/src/4_Together.wl already had user changes; leave them alone.
+
+All launched validation jobs finished. pipeline.json and sensitivity.json PASS:
+full/fkpt/eds/eds_fk yield finite distinct power/bispectrum multipoles; ISiTGR
+f(k) matches ODE within0.0141%; shared mu_kinf1.2->1.3 changes linear AND nonlinear
+sectors; pytree passes, emulator layout113leaves, JIT/eager B agree ~2e-16.
+There is NO sMGPT bispectrum implementation here: no independent final B000/B202
+comparison claimed. Kernel/Z2/routing checks support the bispectrum instead.
+
+Convergence results (maximum relative change, percent P0/P2/P4):
+radial300->600: .0469/.2293/.2996
+radial600->1200: .0142/.0704/.0892
+angular10->20 at radial600: .00107/.00295/.00464
+Do not call default300 sub-0.1% converged. Do not tune to183 just to match archive.
+
+Reproduction: from src, sbatch fkptjax_muMG/examples/validate_bzmass_pipeline.sbatch
+with arguments: reference; kernels; tables --nquad 183;
+tables --nquad 300/600/1200; tables --nquad 600 --nangle 20; pipeline; sensitivity.
+Script uses partition=test and srun --mpi=pmix: needed for this env's mpi4py.
+Do not run the expensive calculations on login nodes. Existing Jupyter Slurm job
+belongs to user; leave it alone. CPU CUDA-plugin warnings are nonfatal.
+summarize_bzmass_validation.py already ran: PNG/PDF, convergence.json, manifest.json.
+
+Remaining optional extension: choose tolerance appropriate to inference and do
+further radial convergence / combined1200x20 if needed; rerun sMGPT loops at
+higher matched resolution (current loop benchmark is archived183, IR and AB
+were freshly run). Wire explicit kernel_mode into synthetic CLI if desired:
+existing --no-beyond-eds means EdSfk, not pure constant-f EdS. No synthetic CLI
+changes yet. Before general-w0wa claims, fix background forwarding and ODE
+friction (currently flat LambdaCDM 2-1.5Omega_m). Rebuild/review old emulators.

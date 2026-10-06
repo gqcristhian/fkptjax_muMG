@@ -1,0 +1,152 @@
+{
+  "imports": {
+    "cosmoprimo": "/n/home12/cgarciaquintero/DESI/src/cosmoprimo/cosmoprimo/__init__.py",
+    "desilike": "/n/home12/cgarciaquintero/DESI/src/desilike/desilike/__init__.py",
+    "folps": "/n/home12/cgarciaquintero/DESI/src/FolpsD/folps/__init__.py",
+    "isitgr": "/n/home12/cgarciaquintero/DESI/src/ISiTGR/isitgr/__init__.py"
+  },
+  "isitgr_vs_ode_growth": {
+    "max_abs": 9.699221847225825e-05,
+    "max_rel": 0.00014094198808740652,
+    "rms_over_ref_rms": 0.00011501992962549397
+  },
+  "growth_range": [
+    0.6826471913991033,
+    0.7618545441573525
+  ],
+  "isitgr_model": {
+    "enabled": true,
+    "lambda_a_Mpc": 148.4560570071259,
+    "lambda_dS_Mpc": 148.4560570071259
+  },
+  "full": {
+    "power_shape": [
+      3,
+      20
+    ],
+    "bs": [
+      [
+        2057643726.8974895,
+        563170185.7038844
+      ],
+      [
+        1081303979.3871071,
+        307981840.58051336
+      ]
+    ],
+    "scoccimarro": [
+      [
+        1458577358.5007622
+      ],
+      [
+        772813584.208404
+      ]
+    ],
+    "mu_kinf": 1.2
+  },
+  "fkpt": {
+    "power_shape": [
+      3,
+      20
+    ],
+    "bs": [
+      [
+        2030499029.9667454,
+        556549204.743464
+      ],
+      [
+        1068209267.8005753,
+        304938749.5419597
+      ]
+    ],
+    "scoccimarro": [
+      [
+        1442719594.586349
+      ],
+      [
+        762377707.2377422
+      ]
+    ],
+    "mu_kinf": 1.2
+  },
+  "eds": {
+    "power_shape": [
+      3,
+      20
+    ],
+    "bs": [
+      [
+        1955272977.5785403,
+        528252176.0933187
+      ],
+      [
+        985542252.5928864,
+        270934465.6930707
+      ]
+    ],
+    "scoccimarro": [
+      [
+        1390572730.7003825
+      ],
+      [
+        690818952.76083
+      ]
+    ],
+    "mu_kinf": 1.2
+  },
+  "eds_fk": {
+    "power_shape": [
+      3,
+      20
+    ],
+    "bs": [
+      [
+        2027757574.3134656,
+        555834898.005242
+      ],
+      [
+        1067639267.0953947,
+        304765444.21447825
+      ]
+    ],
+    "scoccimarro": [
+      [
+        1439322918.6410632
+      ],
+      [
+        759492316.7515402
+      ]
+    ],
+    "mu_kinf": 1.2
+  },
+  "full_vs_fkpt": {
+    "max_abs": 266.48083863336797,
+    "max_rel": 0.05741253080781,
+    "rms_over_ref_rms": 0.005383700517702878
+  },
+  "full_vs_fkpt_bs": {
+    "max_abs": 27144696.93074417,
+    "max_rel": 0.013368485544752383,
+    "rms_over_ref_rms": 0.01302526560072755
+  },
+  "full_vs_eds": {
+    "max_abs": 973.4097323537862,
+    "max_rel": 0.2356952255677136,
+    "rms_over_ref_rms": 0.01975687898774045
+  },
+  "full_vs_eds_bs": {
+    "max_abs": 102370749.31894922,
+    "max_rel": 0.13673924722966743,
+    "rms_over_ref_rms": 0.06573778754499986
+  },
+  "full_vs_eds_fk": {
+    "max_abs": 319.539969693069,
+    "max_rel": 0.07366366468829219,
+    "rms_over_ref_rms": 0.006470313331116281
+  },
+  "full_vs_eds_fk_bs": {
+    "max_abs": 29886152.584023952,
+    "max_rel": 0.01473852346188003,
+    "rms_over_ref_rms": 0.014225442281671762
+  }
+}

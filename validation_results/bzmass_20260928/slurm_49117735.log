@@ -1,0 +1,109 @@
+Jax plugin configuration error: Exception when calling jax_plugins.xla_cuda12.initialize()
+Traceback (most recent call last):
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax/_src/xla_bridge.py", line 497, in discover_pjrt_plugins
+    plugin_module.initialize()
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 348, in initialize
+    _check_cuda_versions(raise_on_first_error=True)
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 274, in _check_cuda_versions
+    for d in range(cuda_versions.cuda_device_count())
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: jaxlib/cuda/versions_helpers.cc:126: operation cuInit(0) failed: Unknown CUDA error 303; cuGetErrorName failed. This probably means that JAX was unable to load the CUDA libraries.
+/n/home12/cgarciaquintero/DESI/src/Triumvirate/src/triumvirate/winconv.py:89: ExperimentalWarning: The `triumvirate.winconv` module is currently experimental. Its behaviour has not been fully tested and may change in the future.
+  warnings.warn(
+⚠️ JAX is using CPU. Devices: [CpuDevice(id=0)]
+{
+  "AB_adaptive": {
+    "A": {
+      "max_abs": 5.6439295681443014e-08,
+      "max_rel": 5.3619095139564486e-08,
+      "rms_over_ref_rms": 3.557864985775485e-08
+    },
+    "B": {
+      "max_abs": 4.579903112311712e-08,
+      "max_rel": 4.58497045545537e-08,
+      "rms_over_ref_rms": 3.243825611645737e-08
+    },
+    "Ap": {
+      "max_abs": 3.9627335191028124e-08,
+      "max_rel": 9.763309631100361e-05,
+      "rms_over_ref_rms": 9.703406802685332e-07
+    },
+    "Bp": {
+      "max_abs": 3.2071673761180364e-08,
+      "max_rel": 3.848301314896691e-06,
+      "rms_over_ref_rms": 2.0794088511921888e-06
+    }
+  },
+  "AB_rk4": {
+    "A": {
+      "max_abs": 3.0512426518747304e-07,
+      "max_rel": 2.9511794258046274e-07,
+      "rms_over_ref_rms": 2.3742674805150872e-07
+    },
+    "B": {
+      "max_abs": 2.787523795122482e-07,
+      "max_rel": 2.791102386748548e-07,
+      "rms_over_ref_rms": 2.3463853944858823e-07
+    },
+    "Ap": {
+      "max_abs": 7.825977419440022e-07,
+      "max_rel": 0.0027860601875681974,
+      "rms_over_ref_rms": 2.917352982112486e-05
+    },
+    "Bp": {
+      "max_abs": 7.907092727243992e-07,
+      "max_rel": 0.00011433800742261851,
+      "rms_over_ref_rms": 6.891032782169155e-05
+    }
+  },
+  "D2D3": {
+    "D2": {
+      "max_abs": 2.9473547480396434e-07,
+      "max_rel": 3.072330171659318e-07,
+      "rms_over_ref_rms": 2.4457529079537717e-07
+    },
+    "D2p": {
+      "max_abs": 7.251448272960204e-07,
+      "max_rel": 0.0010427987051476139,
+      "rms_over_ref_rms": 2.2316080143160467e-05
+    },
+    "CFD3": {
+      "max_abs": 8.439218883715682e-07,
+      "max_rel": 5.0815669770451e-07,
+      "rms_over_ref_rms": 4.0505827447526583e-07
+    },
+    "CFD3p": {
+      "max_abs": 3.71326002612804e-06,
+      "max_rel": 2.0464318697953376e-06,
+      "rms_over_ref_rms": 1.8282583807732373e-06
+    }
+  },
+  "bispectrum_mesh_rk4": {
+    "A": {
+      "max_abs": 2.930464346739825e-07,
+      "max_rel": 2.6757212593579304e-07,
+      "rms_over_ref_rms": 2.0093748964988322e-07
+    },
+    "B": {
+      "max_abs": 2.3994768549862044e-07,
+      "max_rel": 2.397963190083739e-07,
+      "rms_over_ref_rms": 1.9916513295493544e-07
+    },
+    "Ap": {
+      "max_abs": 8.874621717502862e-07,
+      "max_rel": 0.036531553646724446,
+      "rms_over_ref_rms": 3.806667054422591e-05
+    },
+    "Bp": {
+      "max_abs": 8.764014072237813e-07,
+      "max_rel": 0.08028929666559594,
+      "rms_over_ref_rms": 6.111373717033586e-05
+    }
+  },
+  "max_A_minus_B": 0.12509546963450446,
+  "Z2_equation": {
+    "max_abs": 0.0,
+    "max_rel": 0.0,
+    "rms_over_ref_rms": 0.0
+  }
+}

@@ -193,6 +193,7 @@ def Kfuncs_to_tables(
     z: float,
     Om: float,
     beyond_eds: bool = False,
+    fkpt_approximation: bool = True,
     rescale_PS: bool = False,
     kmin: Optional[float] = None,
     kmax: Optional[float] = None,
@@ -234,6 +235,8 @@ def Kfuncs_to_tables(
     gamma_a: float = 0.0,
     t_k: float = 1000.0,
     d_s: float = 0.0001,
+    w0: float = -1.0,
+    wa: float = 0.0,
     eftcamb_h1_interp=None,
     eftcamb_h3_interp=None,
     eftcamb_h5_interp=None,
@@ -241,9 +244,12 @@ def Kfuncs_to_tables(
     pmax_bao: float = 0.4,
     Np_bao: int = 100,
     return_kernel_constants=True,
+    return_raw_kfuncs: bool = False,
     neutrino_correction=None,
     use_numba: bool = False,
     fk=None, f0=None,
+    ingredients_fn=None,
+    static_ctx=None,
 ) -> Tuple[Tuple[Any, ...], Tuple[Any, ...]]:
     """
     Return (table_wiggle, table_now) in the A_full=False layout expected by FOLPS.
@@ -272,8 +278,47 @@ def Kfuncs_to_tables(
         is fine when ``fk`` already comes from a full Boltzmann solve on the same
         (massive-neutrino) cosmology, since that already captures the cb growth suppression the
         internal correction approximates -- but the two are redundant, not additive, if combined.
+    fkpt_approximation : bool, default=True
+        ``True`` (default, unchanged historical behavior): beyond-EdS kernels use the fkPT
+        large-scale-limit approximation (``ode.kernel_constants``), reused as global scalars for
+        every loop mode. ``False``: the genuine, non-squeezed (external k, loop q, angle) full
+        kernels are computed via ``fkptjax.MG_kernels.I1udd1_and_P13_grid`` instead, mirroring
+        ``Kfuncs_to_tables_jax``'s ``fkpt_approximation=False`` path exactly (same formulas, same
+        grids) -- see that function's docstring for the full description. Unlike
+        ``Kfuncs_to_tables_jax``, this route also supports ``neutrino_correction`` together with
+        ``fkpt_approximation=False``, since the internal growth ODE here is the numpy
+        ``ModelDerivatives``/``DP`` one, which already accepts it. Has no effect when
+        ``beyond_eds=False``.
+    ingredients_fn : callable or None, default=None
+        Only consulted when ``beyond_eds=True`` and ``fkpt_approximation=False``. If given,
+        called as ``ingredients_fn(k_ext_q, q_loop_Q, kminus_Q, x_r, k_r, p_r, f0)`` -- the SAME
+        live ``f0`` this function passes to ``I1udd1_and_P13_grid`` in the ``else`` branch below,
+        since the ``ApOverf0``/``CFD3p``-type outputs need to be normalized by it, and it depends
+        on the MG parameters (so a callee cannot just assume a fixed value) -- in place of the
+        live ``fkptjax.MG_kernels.I1udd1_and_P13_grid(..., P_mg, ...)`` ODE solve, and expected to
+        return the SAME 16-tuple ``(A_Q, B_Q, ApOverf0_Q, BpOverf0_Q, A_N, B_N, ApOverf0_N,
+        BpOverf0_N, A_RQ, B_RQ, ApOverf0_RQ, BpOverf0_RQ, A_fused_R, ApOverf0_fused_R, CFD3_R,
+        CFD3p_R)``. Everything downstream (the P22/P13 combination in ``calculator.evaluate``) is
+        unchanged either way -- this hook only replaces HOW the beyond-EdS kernel ingredients
+        themselves are obtained, e.g. from a coarse-grid Chebyshev emulator's prediction
+        interpolated onto this call's actual Q-loop/R-loop grid (``fkptjax.ab_ingredients``)
+        instead of a fresh live ODE solve at every quadrature point. The caller is responsible
+        for building the closure so it reflects the CURRENT MG parameter values (this function
+        itself does not know they changed if ``ingredients_fn`` was built once and reused --
+        mirroring how ``mg_kernel_fn`` is passed fresh into ``full_shape.py``'s
+        ``combine_bias_terms_spectrum3_poles`` on every call).
+    w0, wa : float, default=-1.0, 0.0
+        CPL dark-energy equation of state, ``w(a) = w0 + wa*(1-a)``. Only consumed by the
+        ``HS`` and ``PHENOM``/``growth_index``/``growth_index_yukawa`` ``mu(k,eta)`` formulas
+        (see ``mg_jax.py``'s module docstring); every other model ignores them. The growth ODE's
+        own background (``ModelDerivatives.f1``) is always fixed flat LCDM regardless of these --
+        ``growth_index`` with ``gamma_0`` pinned to its GR value (``6/11``) is the way to isolate
+        a genuinely evolving dark-energy background's effect on growth, with no MG signal mixed
+        in, since its ``mu(a)`` formula is built from the true ``w0``/``wa`` Friedmann equation
+        evaluated relative to that fixed fiducial background.
     """
 
+    import jax
     import folps as folpsv2
     from folps.tools_jax import extrapolate_pklin, simpson, interp
     from fkptjax.calculate_jax import JaxCalculator
@@ -291,31 +336,46 @@ def Kfuncs_to_tables(
     k_ext, pk_ext = extrapolate_pklin(k, pk)
     _, pk_now_ext = extrapolate_pklin(k, pk_now)
 
-    solver = ODESolver(zout=float(z), xnow=float(xnow), method=str(ode_method))
-
-    derivs = ModelDerivatives(
-        om=float(Om), ol=float(1.0 - Om),
-        fR0_HS=float(fR0_HS), beta2=float(beta2), n_HS=float(n_HS),
-        screening=int(screening), omegaBD=float(omegaBD),
-        r_c=float(r_c),
-        model=str(model), mg_variant=str(mg_variant) if mg_variant is not None else "mu_OmDE",
-        mu0=float(mu0),
-        beta_1=float(beta_1), lambda_1=float(lambda_1), exp_s=float(exp_s),
-        mu_kinf_BZmass=float(mu_kinf_BZmass),
-        lambda_a_BZmass=float(lambda_a_BZmass),
-        lambda_dS_BZmass=float(lambda_dS_BZmass),
-        mu1=float(mu1), mu2=float(mu2), mu3=float(mu3), mu4=float(mu4),
-        z_div=float(z_div), z_TGR=float(z_TGR), z_tw=float(z_tw),
-        scale_bins=bool(scale_bins), k_TGR=float(k_TGR), k_S=float(k_S), k_c=float(k_c), k_tw=float(k_tw),
-        gamma_0=float(gamma_0), gamma_a=float(gamma_a), t_k=float(t_k), d_s=float(d_s),
-        eftcamb_h1_interp=eftcamb_h1_interp,
-        eftcamb_h3_interp=eftcamb_h3_interp,
-        eftcamb_h5_interp=eftcamb_h5_interp,
-        neutrino_correction=neutrino_correction,
-        # use_numba=bool(use_numba),
-    )
+    # derivs/solver concretize every MG/cosmology parameter via float() to drive fkptjax's
+    # own scipy-based growth ODE (DP) and squeezed-limit kernel-constants ODE below -- this is
+    # exactly what makes this builder non-jittable ("Wall 2", see this function's docstring).
+    # Both are skippable: DP when fk is supplied (the caller's own growth, e.g. from a live/
+    # emulated template); the kernel-constants ODE whenever beyond_eds and not
+    # fkpt_approximation, since calculate_jax.JaxCalculator.evaluate()'s A_Q/CFD3_R (etc.)
+    # kwargs -- always given in that regime, live or via ingredients_fn -- make its own A/
+    # ApOverf0/CFD3/CFD3p fallback dead (`A_Q = A if A_Q is None else A_Q`, and the same
+    # pattern for B_Q/CFD3_R/...): the squeezed scalars are never read once the per-triangle
+    # arrays exist. Building derivs/solver LAZILY (only when one of those two ODEs actually
+    # runs, or rescale_PS needs them) lets a caller who supplies both fk and ingredients_fn
+    # avoid ALL concretization here -- the remaining computation is genuinely jit/vmap-able.
+    def _get_derivs_solver():
+        solver = ODESolver(zout=float(z), xnow=float(xnow), method=str(ode_method))
+        derivs = ModelDerivatives(
+            om=float(Om), ol=float(1.0 - Om),
+            fR0_HS=float(fR0_HS), beta2=float(beta2), n_HS=float(n_HS),
+            screening=int(screening), omegaBD=float(omegaBD),
+            r_c=float(r_c),
+            model=str(model), mg_variant=str(mg_variant) if mg_variant is not None else "mu_OmDE",
+            mu0=float(mu0),
+            beta_1=float(beta_1), lambda_1=float(lambda_1), exp_s=float(exp_s),
+            mu_kinf_BZmass=float(mu_kinf_BZmass),
+            lambda_a_BZmass=float(lambda_a_BZmass),
+            lambda_dS_BZmass=float(lambda_dS_BZmass),
+            mu1=float(mu1), mu2=float(mu2), mu3=float(mu3), mu4=float(mu4),
+            z_div=float(z_div), z_TGR=float(z_TGR), z_tw=float(z_tw),
+            scale_bins=bool(scale_bins), k_TGR=float(k_TGR), k_S=float(k_S), k_c=float(k_c), k_tw=float(k_tw),
+            gamma_0=float(gamma_0), gamma_a=float(gamma_a), t_k=float(t_k), d_s=float(d_s),
+            w0=float(w0), wa=float(wa),
+            eftcamb_h1_interp=eftcamb_h1_interp,
+            eftcamb_h3_interp=eftcamb_h3_interp,
+            eftcamb_h5_interp=eftcamb_h5_interp,
+            neutrino_correction=neutrino_correction,
+            # use_numba=bool(use_numba),
+        )
+        return derivs, solver
 
     if fk is None:
+        derivs, solver = _get_derivs_solver()
         k_ext_np = np.asarray(k_ext, dtype=float)
         Y = DP(k_ext_np, derivs, solver)
         D_ext, Dp_ext = Y[0], Y[1]
@@ -342,7 +402,9 @@ def Kfuncs_to_tables(
     if f0 is not None:
         # Take the caller's f0 verbatim: the estimator below is a DIFFERENT definition (an
         # average of fk_ext, or a fixed-k0 pivot) that would silently drift from the caller's.
-        f0 = float(f0)
+        # NOT concretized (no float()) -- a caller feeding a traced f0 (e.g. from an emulated
+        # template) needs this to stay jit/vmap-able; jnp.asarray is a no-op either way.
+        f0 = jnp.asarray(f0, dtype=jnp.float64)
     else:
         # For growth-index models f(k, z) is scale-independent by construction
         # (up to optional scale-dependent corrections).  Use the conventional
@@ -365,6 +427,7 @@ def Kfuncs_to_tables(
         f0 = float(f0_jax)
 
     if bool(rescale_PS):
+        derivs, solver = _get_derivs_solver()
         pk_ext, pk_now_ext = Rescaling_MG(
             k_ext,
             pk_ext,
@@ -407,66 +470,167 @@ def Kfuncs_to_tables(
             f0_kmax=f0_kmax,
         )
 
-    init_data = setup_kfunctions(
-        k_in=k_ext,
-        kmin=float(kmin),
-        kmax=float(kmax),
-        Nk=int(Nk_kernel),
-        nquadSteps=int(nquadSteps),
-        NQ=int(NQ),
-        NR=int(NR),
-    )
-    kout = init_data.logk_grid
+    if static_ctx is not None:
+        # setup_kfunctions (fkptjax.util) does data-DEPENDENT binning (Python-level max()/min()
+        # on k_in's own values, not just its shape), so it needs a genuinely concrete k_ext --
+        # incompatible with a traced k/pk (e.g. from an emulated template). static_ctx (see
+        # build_jax_static_ctx) precomputes init_data/calculator ONCE, concretely, outside any
+        # trace, exactly like Kfuncs_to_tables_jax already does; reuse it here instead of
+        # rebuilding from this call's (possibly traced) k_ext.
+        init_data = static_ctx['init_data']
+        calculator_static = static_ctx['calculator']
+        kout = static_ctx['kout']
+    else:
+        init_data = setup_kfunctions(
+            k_in=k_ext,
+            kmin=float(kmin),
+            kmax=float(kmax),
+            Nk=int(Nk_kernel),
+            nquadSteps=int(nquadSteps),
+            NQ=int(NQ),
+            NR=int(NR),
+        )
+        calculator_static = None
+        kout = init_data.logk_grid
 
     fk_out = interp(kout, k_ext, fk_ext)
     fk_norm_out = fk_out / f0
 
     # sigma^2 (wiggle / no-wiggle) and the BAO sigma^2 integrals are small 1D
-    # Simpson quadratures.  Evaluating them eagerly in jax forces a host<->device
-    # round-trip per op (device_put / apply_primitive churn ~20 ms/call); do them
-    # in numpy instead.  scipy's Simpson rule reproduces folps' jax `simpson`
-    # bit-for-bit (same composite rule), so results are unchanged.  The grid
-    # (extrapolate_pklin), the interp (interpax cubic) and folps' spherical
-    # Bessel backend stay in jax -- only the quadratures move host-side.
-    from scipy.integrate import simpson as _np_simpson
+    # Simpson quadratures. Evaluating them eagerly in jax forces a host<->device
+    # round-trip per op (device_put / apply_primitive churn ~20 ms/call); when nothing here
+    # is actually traced (the ordinary eager call this builder was written for), do them in
+    # numpy instead -- scipy's Simpson rule reproduces folps' jax `simpson` bit-for-bit (same
+    # composite rule), so results are unchanged. But a caller under jit/vmap/grad (e.g.
+    # beyond_eds=True, fkpt_approximation=False with both fk/f0 and ingredients_fn supplied,
+    # so nothing else below needs concretizing either) hands pk_ext/fk_ext/f0 as tracers,
+    # which np.asarray()/float() cannot concretize -- use the already-imported jax-native
+    # `simpson` (matching Kfuncs_to_tables_jax's own identical block) in that case instead.
+    _traced = any(isinstance(x, jax.core.Tracer) for x in (pk_ext, pk_now_ext, fk_ext, f0))
 
     ff = fk_ext / f0
-    k_ext_h = np.asarray(k_ext)
-    ff_h = np.asarray(ff)
-    sigma2w = float(1.0 / (6.0 * np.pi**2) * _np_simpson(np.asarray(pk_ext) * ff_h**2, x=k_ext_h))
-    sigma2w_NW = float(1.0 / (6.0 * np.pi**2) * _np_simpson(np.asarray(pk_now_ext) * ff_h**2, x=k_ext_h))
+    if _traced:
+        sigma2w = 1.0 / (6.0 * jnp.pi**2) * simpson(pk_ext * ff**2, x=k_ext)
+        sigma2w_NW = 1.0 / (6.0 * jnp.pi**2) * simpson(pk_now_ext * ff**2, x=k_ext)
 
-    p = jnp.exp(jnp.linspace(jnp.log(1e-6), jnp.log(float(pmax_bao)), int(Np_bao)))
-    PSL_NW = interp(p, k_ext, pk_now_ext)
-    p_h = np.asarray(p)
-    PSL_NW_h = np.asarray(PSL_NW)
-    j0_h = np.asarray(folpsv2.spherical_jn_backend(0, p * float(rbao)))
-    j2_h = np.asarray(folpsv2.spherical_jn_backend(2, p * float(rbao)))
+        p = jnp.exp(jnp.linspace(jnp.log(1e-6), jnp.log(float(pmax_bao)), int(Np_bao)))
+        PSL_NW = interp(p, k_ext, pk_now_ext)
+        j0 = jnp.asarray(folpsv2.spherical_jn_backend(0, p * float(rbao)))
+        j2 = jnp.asarray(folpsv2.spherical_jn_backend(2, p * float(rbao)))
 
-    sigma2_NW = float(
-        1.0 / (6.0 * np.pi**2)
-        * _np_simpson(PSL_NW_h * (1.0 - j0_h + 2.0 * j2_h), x=p_h)
-    )
-    delta_sigma2_NW = float(
-        1.0 / (2.0 * np.pi**2)
-        * _np_simpson(PSL_NW_h * j2_h, x=p_h)
-    )
+        sigma2_NW = 1.0 / (6.0 * jnp.pi**2) * simpson(PSL_NW * (1.0 - j0 + 2.0 * j2), x=p)
+        delta_sigma2_NW = 1.0 / (2.0 * jnp.pi**2) * simpson(PSL_NW * j2, x=p)
+    else:
+        from scipy.integrate import simpson as _np_simpson
 
-    if bool(beyond_eds):
+        k_ext_h = np.asarray(k_ext)
+        ff_h = np.asarray(ff)
+        sigma2w = float(1.0 / (6.0 * np.pi**2) * _np_simpson(np.asarray(pk_ext) * ff_h**2, x=k_ext_h))
+        sigma2w_NW = float(1.0 / (6.0 * np.pi**2) * _np_simpson(np.asarray(pk_now_ext) * ff_h**2, x=k_ext_h))
+
+        p = jnp.exp(jnp.linspace(jnp.log(1e-6), jnp.log(float(pmax_bao)), int(Np_bao)))
+        PSL_NW = interp(p, k_ext, pk_now_ext)
+        p_h = np.asarray(p)
+        PSL_NW_h = np.asarray(PSL_NW)
+        j0_h = np.asarray(folpsv2.spherical_jn_backend(0, p * float(rbao)))
+        j2_h = np.asarray(folpsv2.spherical_jn_backend(2, p * float(rbao)))
+
+        sigma2_NW = float(
+            1.0 / (6.0 * np.pi**2)
+            * _np_simpson(PSL_NW_h * (1.0 - j0_h + 2.0 * j2_h), x=p_h)
+        )
+        delta_sigma2_NW = float(
+            1.0 / (2.0 * np.pi**2)
+            * _np_simpson(PSL_NW_h * j2_h, x=p_h)
+        )
+
+    if bool(beyond_eds) and bool(fkpt_approximation):
         from fkptjax.ode import kernel_constants
+        derivs, solver = _get_derivs_solver()
         KA, KAp, KR1, KR1p = kernel_constants(f0=f0, derivs=derivs, solver=solver)
         A = float(KA)
         ApOverf0 = float(KAp) / float(f0)
         CFD3 = float(KR1)
         CFD3p = float(KR1p)
     else:
+        # beyond_eds=False, or beyond_eds=True with fkpt_approximation=False: either way these
+        # squeezed-limit scalars are unused placeholders. In the fkpt_approximation=False case,
+        # calculate_jax.JaxCalculator.evaluate() always receives the genuine per-triangle A_Q/
+        # B_Q/.../CFD3_R/CFD3p_R below (live or via ingredients_fn) and only falls back to A/
+        # ApOverf0/CFD3/CFD3p when those are None (`A_Q = A if A_Q is None else A_Q`, same
+        # pattern for the others) -- so skipping kernel_constants's ODE here changes nothing
+        # about the output, and (with fk also supplied) avoids concretizing Om/mu0/etc at all.
         A = 1.0
         ApOverf0 = 0.0
         CFD3 = 1.0
         CFD3p = 1.0
 
-    calculator = JaxCalculator()
-    calculator.initialize(init_data)
+    if calculator_static is not None:
+        calculator = calculator_static
+    else:
+        calculator = JaxCalculator()
+        calculator.initialize(init_data)
+
+    # Full (non-fkPT-approximated) beyond-EdS kernels: solved at the genuine
+    # (external k, loop q, angle) triples of the Q/R quadrature grids instead of
+    # reusing the large-scale-limit scalars A/ApOverf0/CFD3/CFD3p above. This
+    # mirrors Kfuncs_to_tables_jax's fkpt_approximation=False block exactly (same
+    # formulas, same grids, same MG_kernels entry point) -- see that function's
+    # docstring for the full description of the Q/R/N orderings. Unlike that jax
+    # route, ``derivs``/``solver`` above already carry ``neutrino_correction``, so
+    # the growth ODE feeding ``f0``/``fk_ext`` is neutrino-corrected too when
+    # requested; this block only adds the k/q/angle-dependent kernel pieces on
+    # top of that.
+    A_Q = B_Q = ApOverf0_Q = BpOverf0_Q = None
+    A_N = B_N = ApOverf0_N = BpOverf0_N = None
+    A_RQ = B_RQ = ApOverf0_RQ = BpOverf0_RQ = None
+    A_fused_R = ApOverf0_fused_R = None
+    CFD3_R = CFD3p_R = None
+    if bool(beyond_eds) and not bool(fkpt_approximation):
+        from fkptjax import mg_jax as _bj
+        from fkptjax import MG_kernels as _mgk
+
+        kind = _resolve_mg_kind(model, mg_variant)
+        P_mg = _bj.pack_constants_jnp(
+            om=Om, ol=1.0 - Om, kind=kind,
+            mu1=mu1, mu2=mu2, mu3=mu3, mu4=mu4,
+            z_div=z_div, z_TGR=z_TGR, z_tw=z_tw, scale_bins=scale_bins,
+            k_TGR=k_TGR, k_c=k_c, k_S=k_S, k_tw=k_tw,
+            mu_kinf=mu_kinf_BZmass, lambda_a=lambda_a_BZmass, lambda_dS=lambda_dS_BZmass,
+            fR0_HS=fR0_HS, beta2=beta2, n_HS=n_HS,
+            r_c=r_c, mu0=mu0,
+            beta_1=beta_1, lambda_1=lambda_1, exp_s=exp_s,
+            w0=w0, wa=wa,
+            gamma_0=gamma_0, gamma_a=gamma_a, t_k=t_k, d_s=d_s,
+            neutrino_correction=neutrino_correction)
+        xstop = jnp.log(1.0 / (1.0 + jnp.asarray(z, dtype=jnp.float64)))
+
+        k_ext_q = calculator.logk_grid_jax
+        r_q = calculator.r_jax
+        x_q = calculator.x_jax
+        y_q = jnp.sqrt(1.0 + r_q * r_q - 2.0 * r_q * x_q)
+        q_loop_Q = r_q * k_ext_q
+        kminus_Q = k_ext_q * y_q
+
+        r_r = calculator.r_r_jax
+        x_r = calculator.x_r_jax
+        q_loop_R = r_r * k_ext_q
+
+        if ingredients_fn is not None:
+            (A_Q, B_Q, ApOverf0_Q, BpOverf0_Q,
+             A_N, B_N, ApOverf0_N, BpOverf0_N,
+             A_RQ, B_RQ, ApOverf0_RQ, BpOverf0_RQ,
+             A_fused_R, ApOverf0_fused_R, CFD3_R, CFD3p_R) = ingredients_fn(
+                k_ext_q, q_loop_Q, kminus_Q, x_r, k_ext_q, q_loop_R,
+                jnp.asarray(f0, dtype=jnp.float64))
+        else:
+            (A_Q, B_Q, ApOverf0_Q, BpOverf0_Q,
+             A_N, B_N, ApOverf0_N, BpOverf0_N,
+             A_RQ, B_RQ, ApOverf0_RQ, BpOverf0_RQ,
+             A_fused_R, ApOverf0_fused_R, CFD3_R, CFD3p_R) = _mgk.I1udd1_and_P13_grid(
+                k_ext_q, q_loop_Q, kminus_Q, x_r, k_ext_q, q_loop_R, P_mg, float(xnow), xstop,
+                jnp.asarray(f0, dtype=jnp.float64),
+                solver='rk4', n_steps=64)
 
     kfuncs = calculator.evaluate(
         Pk_in=pk_ext,
@@ -478,6 +642,11 @@ def Kfuncs_to_tables(
         CFD3p=CFD3p,
         sigma2v=0.0,
         f0=f0,
+        A_Q=A_Q, B_Q=B_Q, ApOverf0_Q=ApOverf0_Q, BpOverf0_Q=BpOverf0_Q,
+        A_fused_R=A_fused_R, ApOverf0_fused_R=ApOverf0_fused_R,
+        CFD3_R=CFD3_R, CFD3p_R=CFD3p_R,
+        A_N=A_N, B_N=B_N, ApOverf0_N=ApOverf0_N, BpOverf0_N=BpOverf0_N,
+        A_RQ=A_RQ, B_RQ=B_RQ, ApOverf0_RQ=ApOverf0_RQ, BpOverf0_RQ=BpOverf0_RQ,
     )
 
     def _arr(x):
@@ -555,8 +724,12 @@ def Kfuncs_to_tables(
         delta_sigma2_NW,
         f0,
     )
+    if return_kernel_constants and return_raw_kfuncs:
+        return table_w, table_nw, (A, ApOverf0 * f0, CFD3, CFD3p), kfuncs
     if return_kernel_constants:
         return table_w, table_nw, (A, ApOverf0 * f0, CFD3, CFD3p)
+    if return_raw_kfuncs:
+        return table_w, table_nw, kfuncs
     return table_w, table_nw
 
 
@@ -596,34 +769,65 @@ def _resolve_mg_kind(model, mg_variant):
 
     model_u = str(model or '').strip().upper()
     variant_u = str(mg_variant or '').strip().upper()
-    if model_u == 'PHENOM' and variant_u == 'BINNING':
-        return _mg.BINNING
+    if model_u in ('LCDM', 'GR'):
+        return _mg.LCDM
+    if model_u == 'HS':
+        return _mg.HS
+    if model_u == 'NDGP':
+        return _mg.NDGP
+    if model_u == 'HDKI' and variant_u in ('MU_OMDE', 'MUOMDE'):
+        return _mg.MU_OMDE
+    if model_u == 'HDKI' and variant_u == 'BZ':
+        return _mg.BZ
     if model_u == 'HDKI' and variant_u in ('BZ_MASS', 'BZMASS'):
         return _mg.BZ_MASS
+    if model_u == 'HDKI' and variant_u in ('EFT_DE', 'EFTDE'):
+        return _mg.EFT_DE
+    if model_u == 'PHENOM' and variant_u == 'BINNING':
+        return _mg.BINNING
+    if model_u == 'PHENOM' and variant_u in ('GROWTH_INDEX', 'GROWTHINDEX'):
+        return _mg.GROWTH_INDEX
+    if model_u == 'PHENOM' and variant_u in ('GROWTH_INDEX_YUKAWA', 'GROWTHINDEXYUKAWA'):
+        return _mg.GROWTH_INDEX_YUKAWA
     raise NotImplementedError(
         f"Kfuncs_to_tables_jax has no JAX right-hand side for model={model!r}, "
-        f"mg_variant={mg_variant!r}; supported: PHENOM/binning, HDKI/BZ_Mass. "
-        "Use the eager Kfuncs_to_tables for the others.")
+        f"mg_variant={mg_variant!r}; supported: LCDM/GR, HS, NDGP, "
+        "HDKI/mu_OmDE, HDKI/BZ, HDKI/BZ_Mass, HDKI/EFT_DE, PHENOM/binning, "
+        "PHENOM/growth_index, PHENOM/growth_index_yukawa.")
 
 
 def Kfuncs_to_tables_jax(
-    k, pk, pk_now, *, z, Om, beyond_eds=True,
+    k, pk, pk_now, *, z, Om, beyond_eds=True, fkpt_approximation=True,
     kmin=None, kmax=None, Nk_kernel=120, nquadSteps=300, NQ=10, NR=10,
     xnow=-3.912023, f0_kmax=None,
     mu1=1.0, mu2=1.0, mu3=1.0, mu4=1.0,
     z_div=1.0, z_TGR=10.0, z_tw=0.5, scale_bins=False,
     k_TGR=0.001, k_S=0.5, k_c=0.1, k_tw=0.01,
     rbao=104.0, pmax_bao=0.4, Np_bao=100,
-    return_kernel_constants=True, static_ctx=None,
-    fk=None, f0=None,
+    return_kernel_constants=True, return_raw_kfuncs=False, static_ctx=None,
+    fk=None, f0=None, ingredients_fn=None,
     model='PHENOM', mg_variant='binning',
+    w0=-1.0, wa=0.0,
+    fR0_HS=0.0, beta2=1.0 / 6.0, n_HS=1,
+    r_c=1.0e30,
+    mu0=0.0,
+    beta_1=1.0, lambda_1=1.0, exp_s=1.0,
     mu_kinf_BZmass=1.0, lambda_a_BZmass=0.0, lambda_dS_BZmass=0.0,
+    eftde_eta_grid=None, eftde_h1_grid=None, eftde_h3_grid=None, eftde_h5_grid=None,
+    eftde_scale_dependent=True, eftde_k2_pivot=0.01,
+    gamma_0=0.54545, gamma_a=0.0, t_k=1000.0, d_s=0.0001,
 ):
     """Fully jax-traceable (jit/vmap-able) ``Kfuncs_to_tables``.
 
-    Supports ``model='PHENOM', mg_variant='binning'`` (the default, and the
-    historical behaviour) and ``model='HDKI', mg_variant='BZ_Mass'``.  ``model``
-    and ``mg_variant`` are STATIC: they choose which mu expression is traced.
+    Supports every model :mod:`fkptjax.mg_jax` implements: ``LCDM``/``GR``,
+    ``HS`` (Hu-Sawicki f(R)), ``NDGP``, ``HDKI`` with ``mg_variant`` in
+    ``{'mu_OmDE', 'BZ', 'BZ_Mass', 'EFT_DE'}``, and ``PHENOM`` with
+    ``mg_variant`` in ``{'binning', 'growth_index', 'growth_index_yukawa'}``
+    (the default, and the historical behaviour, is ``PHENOM``/``binning``).
+    ``model`` and ``mg_variant`` are STATIC: they choose which mu expression
+    is traced. See :mod:`fkptjax.mg_jax`'s module docstring for the exact
+    mu(k,eta) formula used by each and for the ``eftde_*`` grid convention
+    (EFT_DE takes h1/h3/h5(eta) pre-sampled on a grid, not callables).
 
     Same physics/outputs as :func:`Kfuncs_to_tables`, but the growth and
     beyond-EdS kernel ODEs are integrated with diffrax (``fkptjax.jax_ode``) on
@@ -661,6 +865,62 @@ def Kfuncs_to_tables_jax(
         over ``k <= f0_kmax``.  Pass it explicitly alongside ``fk`` when the caller
         has its own definition (e.g. sqrt(P_theta/P_delta) at a fixed small k), so
         the two cannot drift apart.
+    ingredients_fn : callable or None, default=None
+        Same hook :func:`Kfuncs_to_tables` (the eager builder) accepts: a
+        zero-extra-argument closure (e.g. ``fkptjax.ab_ingredients.
+        IngredientsProvider.bind(**params)``) taking ``(k_ext_q, q_loop_Q,
+        kminus_Q, x_r, k_r, p_r, f0)`` and returning the SAME 16-tuple
+        :func:`fkptjax.MG_kernels.I1udd1_and_P13_grid` does -- substitutes a
+        trained Chebyshev-predict + JAX-native interpolation for the live
+        diffrax solve below when ``fkpt_approximation=False``. ``None``
+        (default): unchanged behaviour (live ``I1udd1_and_P13_grid``). Unlike
+        the eager builder, this path is ALREADY fully ``jnp``/traceable
+        either way -- the point of wiring this in here is speed (avoiding a
+        live per-quadrature-point ODE solve on every call), not jittability,
+        which this function already has.
+    return_raw_kfuncs : bool, default=False
+        If ``True``, additionally return the raw ``fkptjax.types.KFunctionsOut``
+        namedtuple from ``JaxCalculator.evaluate_jax`` (appended after
+        ``kernel_constants`` when ``return_kernel_constants=True``, otherwise
+        as the third element).  Useful for inspecting an individual, not yet
+        combined, kernel piece -- e.g. ``kfuncs.P22uu`` (the pure G2-squared
+        one-loop term, before it is added to ``P13uu`` in the assembled table)
+        -- rather than only the fully combined/RSD-projected tables/multipoles.
+    fkpt_approximation : bool, default=True
+        ``True`` (default): beyond-EdS kernels use the fkPT large-scale-limit
+        approximation (``kernel_constants_jax``), exactly as before --
+        identical output to prior releases.  ``False``: the P22-loop
+        (F2evQ/G2evQ -> P22dd/P22du/P22uu and the bias terms built from them)
+        and the P13-loop (Gamma2evR/Gamma2fevR/C3Gamma3/C3Gamma3f ->
+        P13dd/P13du/P13uu) are computed at the genuine, non-squeezed
+        (external k, loop q, angle) triples of the Q/R quadrature grids via
+        :mod:`fkptjax.MG_kernels`, instead of reusing large-scale-limit
+        scalars for every mode. This was cross-checked against an independent
+        from-scratch scipy ODE solve and a from-scratch Wolfram evaluation of
+        the collaborator reference sMGPT's own equations (agreement to
+        ~1e-6-1e-7 pointwise, and against a real sMGPT reference table
+        end-to-end), and matches the ``True`` path exactly in the GR and
+        scale-independent limits, as required. That process also found and
+        fixed three real, pre-existing bugs in calculate_jax.py's
+        Gamma2evR/Gamma2fevR/C3Gamma3/C3Gamma3f/G3K formulas along the way.
+        The I1udd1-family bias/RSD kernels (I1udd1A/I2uud1A/I2uud2A/I3uuu2A/
+        I3uuu3A) now (2026-09-01, THIRD attempt) use a genuine three-ordering
+        (Q+R+N) sum here, mirroring sMGPT's own computeOneKBothExact/
+        AKernelsT architecture exactly: all of Q ("tA"), R ("a") and N ("A")
+        evaluated at the SAME (r,x) point on the SAME clipped Q-loop grid,
+        combined before a single q-integral -- see calculate_jax.py's
+        "have_N" branch. Two earlier attempts evaluated the R/N pieces on
+        the separate, unclipped R-loop/P13-domain instead and failed (see
+        ``.claude/plans/quizzical-mapping-catmull.md`` for that evidence
+        trail); this one fixes the actual domain mismatch that caused those
+        failures. Pending the same validation as the rest of this flag
+        (GR-limit exact match, Wolfram cross-check) before being trusted for
+        production use.  Requires a model
+        supported by ``fkptjax.mg_jax.mu`` -- now every model this function
+        accepts (see the class-level list above); raises
+        ``NotImplementedError`` for anything ``_resolve_mg_kind`` doesn't
+        recognize. Has no effect when ``beyond_eds=False``. More expensive
+        than ``True`` -- see :mod:`fkptjax.MG_kernels`'s performance note.
     """
     import folps as folpsv2
     from folps.tools_jax import extrapolate_pklin, simpson, interp
@@ -673,17 +933,27 @@ def Kfuncs_to_tables_jax(
     k_ext, pk_ext = extrapolate_pklin(k, pk)
     _, pk_now_ext = extrapolate_pklin(k, pk_now)
 
-    # MG constants (Om and the MG parameters may be traced); xstop concrete (z is a
-    # float).  ``kind`` is STATIC -- it selects which model's mu is traced at all; see
-    # mg_jax's module docstring for why that is a Python branch and not a jnp.where.
+    # MG constants (Om and the MG parameters, INCLUDING z, may be traced --
+    # xstop is kept as a jnp value, not concretized via float(), specifically
+    # so z can be jax.jit/vmap/grad'd through this function; only kind is
+    # STATIC (it selects which model's mu is traced at all -- see mg_jax's
+    # module docstring for why that is a Python branch and not a jnp.where).
     kind = _resolve_mg_kind(model, mg_variant)
     P = _bj.pack_constants_jnp(
         om=Om, ol=1.0 - Om, kind=kind,
         mu1=mu1, mu2=mu2, mu3=mu3, mu4=mu4,
         z_div=z_div, z_TGR=z_TGR, z_tw=z_tw, scale_bins=scale_bins,
         k_TGR=k_TGR, k_c=k_c, k_S=k_S, k_tw=k_tw,
-        mu_kinf=mu_kinf_BZmass, lambda_a=lambda_a_BZmass, lambda_dS=lambda_dS_BZmass)
-    xstop = float(np.log(1.0 / (1.0 + float(z))))
+        mu_kinf=mu_kinf_BZmass, lambda_a=lambda_a_BZmass, lambda_dS=lambda_dS_BZmass,
+        w0=w0, wa=wa,
+        fR0_HS=fR0_HS, beta2=beta2, n_HS=n_HS,
+        r_c=r_c, mu0=mu0,
+        beta_1=beta_1, lambda_1=lambda_1, exp_s=exp_s,
+        eftde_eta_grid=eftde_eta_grid, eftde_h1_grid=eftde_h1_grid,
+        eftde_h3_grid=eftde_h3_grid, eftde_h5_grid=eftde_h5_grid,
+        eftde_scale_dependent=eftde_scale_dependent, eftde_k2_pivot=eftde_k2_pivot,
+        gamma_0=gamma_0, gamma_a=gamma_a, t_k=t_k, d_s=d_s)
+    xstop = jnp.log(1.0 / (1.0 + jnp.asarray(z, dtype=jnp.float64)))
 
     # growth: either integrate the binned-mu ODE, or take f(k) from the caller.
     #
@@ -771,9 +1041,115 @@ def Kfuncs_to_tables_jax(
     else:
         A = 1.0; ApOverf0 = 0.0; CFD3 = 1.0; CFD3p = 1.0
 
+    # Full (non-fkPT-approximated) beyond-EdS kernels: solved at the genuine
+    # (external k, loop q, angle) triples of the Q/R grids instead of reusing
+    # the large-scale-limit scalars A/ApOverf0/CFD3/CFD3p above. See
+    # fkptjax.MG_kernels and the fkpt_approximation docstring entry.
+    #
+    # Three momentum "orderings" of the same physical triple {k_ext, q,
+    # kminus=|k_ext-q|} are needed for the I1udd1-family (mirrors the
+    # collaborator reference sMGPT's Q/R/N convention, 2_P22type.wl's
+    # computeOneKBothExact/AKernelsT), ALL evaluated on the SAME clipped
+    # Q-loop grid:
+    #   Q ordering: output leg = k_ext, input legs = (q, kminus)
+    #   R ordering: output leg = kminus, input legs = (k_ext, q)
+    #   N ordering: output leg = q,      input legs = (k_ext, kminus)
+    # plus the FUSED (caligraphic-A - caligraphic-B x^2) combination on the
+    # SEPARATE R grid (output leg = kminus, angle sign flipped -- matches
+    # sMGPT's AminusBx2h[-x,k_ext,q]) for the P13-loop's Gamma2/Gamma3-type
+    # pieces only -- that one genuinely needs its own (unclipped) domain,
+    # unlike the I1udd1-family above.
+    A_Q = B_Q = ApOverf0_Q = BpOverf0_Q = None
+    A_N = B_N = ApOverf0_N = BpOverf0_N = None
+    A_RQ = B_RQ = ApOverf0_RQ = BpOverf0_RQ = None
+    A_fused_R = ApOverf0_fused_R = None
+    CFD3_R = CFD3p_R = None
+    if bool(beyond_eds) and not bool(fkpt_approximation):
+        from fkptjax import MG_kernels as _mgk
+
+        k_ext_q = calculator.logk_grid_jax
+
+        # Q ordering (P22-loop F2evQ/G2evQ, and the Q-ordering "tA" bias/RSD kernels)
+        r_q = calculator.r_jax
+        x_q = calculator.x_jax
+        y_q = jnp.sqrt(1.0 + r_q * r_q - 2.0 * r_q * x_q)
+        q_loop_Q = r_q * k_ext_q
+        kminus_Q = k_ext_q * y_q
+
+        # The I1udd1-family's three orderings (Q/R/N) -- matching sMGPT's own
+        # computeOneKBothExact/AKernelsT architecture -- all evaluate the
+        # SAME A_B_grid formula at the SAME (r,x) point on this SAME clipped
+        # Q-loop grid, just with the {k_ext, q, kminus} triple permuted:
+        #   Q: output leg k_ext,   input legs (q, kminus)
+        #   N: output leg q,       input legs (k_ext, kminus)  -- sMGPT's Ah[q,k,kminus]
+        #   R: output leg kminus,  input legs (k_ext, q)        -- sMGPT's Ah[kminus,k,q]
+        # (An earlier version of this fix evaluated R/N on the separate,
+        # unclipped R-loop grid instead, which only reproduces the correct
+        # physics in the squeezed (scalar A=B) limit -- see
+        # .claude/plans/quizzical-mapping-catmull.md for that evidence trail.)
+        #
+        # P13-loop's fused D2/D3 kernel (Gamma2/Gamma3-type terms, on the
+        # SEPARATE R-loop grid) is independently cross-checked against a
+        # from-scratch Wolfram evaluation of sMGPT's own equations (see
+        # .claude/plans/quizzical-mapping-catmull.md; that process also
+        # found and fixed three real, pre-existing bugs in
+        # calculate_jax.py's Gamma2evR/Gamma2fevR/C3Gamma3/C3Gamma3f/G3K
+        # formulas). P13dd/du/uu match the sMGPT reference cleanly.
+        #
+        # Rather than 4 separate top-level ODE dispatches (3x A_B_grid for
+        # Q/N/R, plus D2_D3_fused_grid for the P13-loop -- each its own XLA
+        # dispatch + host-device sync), MG_kernels.I1udd1_and_P13_grid
+        # solves all of them in ONE combined batch: verified (2026-09-02) to
+        # reproduce the separate-calls result to ~1e-10, for both a
+        # scale-independent and a scale-dependent model, at ~1.8-2x the
+        # speed on GPU.
+        r_r = calculator.r_r_jax
+        x_r = calculator.x_r_jax
+        q_loop_R = r_r * k_ext_q
+
+        if ingredients_fn is not None:
+            # Trained ab_ingredients emulator (predict + interpolate) instead of a
+            # live per-quadrature-point ODE solve -- see this session's validation
+            # notes (mu_OmDE: <0.05% max relative error against 'adaptive'; BZ_Mass
+            # needed a resolution boost first, see build_ingredients_provider_for_run).
+            (A_Q, B_Q, ApOverf0_Q, BpOverf0_Q,
+             A_N, B_N, ApOverf0_N, BpOverf0_N,
+             A_RQ, B_RQ, ApOverf0_RQ, BpOverf0_RQ,
+             A_fused_R, ApOverf0_fused_R, CFD3_R, CFD3p_R) = ingredients_fn(
+                k_ext_q, q_loop_Q, kminus_Q, x_r, k_ext_q, q_loop_R,
+                jnp.asarray(f0, dtype=jnp.float64))
+        else:
+            # solver='rk4': MG_kernels.py's own default is 'adaptive' because a
+            # fixed-step solver gives wrong (sometimes wrong-sign) results near
+            # the collinear (q~k_ext) singularity -- see its module docstring.
+            # 'rk4' is used HERE specifically because this Q/R-loop domain is
+            # already clipped well away from that singularity: verified
+            # (2026-09-02) that y=kminus/k_ext's minimum stays ~0.52 (Q-grid) /
+            # ~0.23 (R-grid), essentially UNCHANGED across Nk_kernel=16..120 (so
+            # this holds regardless of the caller's k-bin count, not just at one
+            # tested resolution) -- both far from the y->0 danger zone. At
+            # n_steps=64, this matches the adaptive solver's own answer to
+            # ~1e-6 for both a scale-independent (HDKI/mu_OmDE) and a
+            # scale-dependent (Hu-Sawicki f(R)) model, while being ~3-20x
+            # faster (adaptive's own step count/cost varies noticeably by
+            # model). If this grid's construction ever changes (different
+            # kmin/kmax/NQ/NR/nquadSteps) such that y could approach 0, this
+            # choice needs re-validating -- see check_rk4_speed.py.
+            (A_Q, B_Q, ApOverf0_Q, BpOverf0_Q,
+             A_N, B_N, ApOverf0_N, BpOverf0_N,
+             A_RQ, B_RQ, ApOverf0_RQ, BpOverf0_RQ,
+             A_fused_R, ApOverf0_fused_R, CFD3_R, CFD3p_R) = _mgk.I1udd1_and_P13_grid(
+                k_ext_q, q_loop_Q, kminus_Q, x_r, k_ext_q, q_loop_R, P, float(xnow), xstop, f0,
+                solver='rk4', n_steps=64)
+
     kfuncs = calculator.evaluate_jax(
         Pk_in=pk_ext, Pk_nw_in=pk_now_ext, fk_in=fk_ext,
-        A=A, ApOverf0=ApOverf0, CFD3=CFD3, CFD3p=CFD3p, sigma2v=0.0, f0=f0)
+        A=A, ApOverf0=ApOverf0, CFD3=CFD3, CFD3p=CFD3p, sigma2v=0.0, f0=f0,
+        A_Q=A_Q, B_Q=B_Q, ApOverf0_Q=ApOverf0_Q, BpOverf0_Q=BpOverf0_Q,
+        A_fused_R=A_fused_R, ApOverf0_fused_R=ApOverf0_fused_R,
+        CFD3_R=CFD3_R, CFD3p_R=CFD3p_R,
+        A_N=A_N, B_N=B_N, ApOverf0_N=ApOverf0_N, BpOverf0_N=BpOverf0_N,
+        A_RQ=A_RQ, B_RQ=B_RQ, ApOverf0_RQ=ApOverf0_RQ, BpOverf0_RQ=BpOverf0_RQ)
 
     zeros = jnp.zeros_like(jnp.asarray(kout))
 
@@ -794,8 +1170,12 @@ def Kfuncs_to_tables_jax(
     table_w = _tab(0, (sigma2w, f0))
     table_nw = _tab(1, (sigma2w_NW, sigma2_NW, delta_sigma2_NW, f0))
 
+    if return_kernel_constants and return_raw_kfuncs:
+        return table_w, table_nw, (A, ApOverf0 * f0, CFD3, CFD3p), kfuncs
     if return_kernel_constants:
         return table_w, table_nw, (A, ApOverf0 * f0, CFD3, CFD3p)
+    if return_raw_kfuncs:
+        return table_w, table_nw, kfuncs
     return table_w, table_nw
 
 

@@ -1,0 +1,33 @@
+
+=== F4 ===
+Jax plugin configuration error: Exception when calling jax_plugins.xla_cuda12.initialize()
+Traceback (most recent call last):
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax/_src/xla_bridge.py", line 497, in discover_pjrt_plugins
+    plugin_module.initialize()
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 348, in initialize
+    _check_cuda_versions(raise_on_first_error=True)
+  File "/n/home12/cgarciaquintero/.conda/envs/cosmodesi_new/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 274, in _check_cuda_versions
+    for d in range(cuda_versions.cuda_device_count())
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: jaxlib/cuda/versions_helpers.cc:126: operation cuInit(0) failed: Unknown CUDA error 303; cuGetErrorName failed. This probably means that JAX was unable to load the CUDA libraries.
+/n/home12/cgarciaquintero/DESI/src/Triumvirate/src/triumvirate/winconv.py:89: ExperimentalWarning: The `triumvirate.winconv` module is currently experimental. Its behaviour has not been fully tested and may change in the future.
+  warnings.warn(
+⚠️ JAX is using CPU. Devices: [CpuDevice(id=0)]
+  z*=1.0: alpha0=-3.70  alpha2=-2.19  max|resid| ell=0,2,4 = 1.584%, 0.778%, 0.028%  (<1% everywhere? False)
+  z*=2.0: alpha0=-6.26  alpha2=-3.70  max|resid| ell=0,2,4 = 2.364%, 1.148%, 0.047%  (<1% everywhere? False)
+  z*=3.0: alpha0=-7.06  alpha2=-4.16  max|resid| ell=0,2,4 = 2.494%, 1.194%, 0.052%  (<1% everywhere? False)
+  z*=5.0: alpha0=-7.31  alpha2=-4.29  max|resid| ell=0,2,4 = 2.506%, 1.197%, 0.054%  (<1% everywhere? False)
+
+=== F5 ===
+  z*=1.0: alpha0=-1.64  alpha2=-0.86  max|resid| ell=0,2,4 = 0.348%, 0.122%, 0.013%  (<1% everywhere? True)
+  z*=2.0: alpha0=-2.39  alpha2=-1.24  max|resid| ell=0,2,4 = 0.433%, 0.145%, 0.020%  (<1% everywhere? True)
+  z*=3.0: alpha0=-2.51  alpha2=-1.31  max|resid| ell=0,2,4 = 0.433%, 0.148%, 0.021%  (<1% everywhere? True)
+  z*=5.0: alpha0=-2.54  alpha2=-1.32  max|resid| ell=0,2,4 = 0.433%, 0.148%, 0.021%  (<1% everywhere? True)
+
+=== F6 ===
+  z*=1.0: alpha0=-0.30  alpha2=-0.14  max|resid| ell=0,2,4 = 0.013%, 0.010%, 0.003%  (<1% everywhere? True)
+  z*=2.0: alpha0=-0.40  alpha2=-0.19  max|resid| ell=0,2,4 = 0.016%, 0.013%, 0.004%  (<1% everywhere? True)
+  z*=3.0: alpha0=-0.41  alpha2=-0.19  max|resid| ell=0,2,4 = 0.016%, 0.013%, 0.004%  (<1% everywhere? True)
+  z*=5.0: alpha0=-0.42  alpha2=-0.20  max|resid| ell=0,2,4 = 0.016%, 0.014%, 0.004%  (<1% everywhere? True)
+
+Saved outputs/alpha_fit_summary.json and figures/plot6_alpha_fit_*.png

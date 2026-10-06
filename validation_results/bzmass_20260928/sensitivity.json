@@ -1,0 +1,20 @@
+{
+  "power_response": {
+    "max_abs": 3304.9287541736558,
+    "max_rel": 0.13021654744115688,
+    "rms_over_ref_rms": 0.04849970217528917
+  },
+  "linear_response": {
+    "max_abs": 316.4473124776596,
+    "max_rel": 0.35809678344797047,
+    "rms_over_ref_rms": 0.015042549832602906
+  },
+  "kernel_mu_before": 1.2,
+  "kernel_mu_after": 1.3,
+  "emulator_leaf_count": 113,
+  "bispectrum_jit": {
+    "max_abs": 4.76837158203125e-07,
+    "max_rel": 2.109345859189046e-16,
+    "rms_over_ref_rms": 2.0839686714570986e-16
+  }
+}

@@ -1,0 +1,145 @@
+
+========================================
+Using project directory: /n/home12/cgarciaquintero/DESI/src/sMGPT/
+========================================
+
+========================================
+Using source directory: /n/home12/cgarciaquintero/DESI/src/sMGPT/src
+========================================
+
+========================================
+Using input file: /n/home12/cgarciaquintero/DESI/src/sMGPT/0_input_BZMass_BGS.wl
+========================================
+tracer= BGS
+z_ev= 0.295
+b1 = 1.6215433618068629
+presuffix = BGS_BZMass
+PTkernels=2: Using MG kernels without screenings
+suffix = BGS_BZMass_NoScreen
+OmegaM0 = 0.31519, h = 0.6736
+redshift z = 0.295 , eta = -0.25851069515150105
+Sc=0: Screenings off
+Files will be stored in the directory ./outputs/BGS_BZMass/NoScreen
+
+========================================
+Extending input linear P(k)
+========================================
+
+InterpolatingFunction::dmval: Input value {-5.} lies outside the range of data in the interpolating function. Extrapolation will be used.
+
+InterpolatingFunction::dmval: Input value {-4.99132} lies outside the range of data in the interpolating function. Extrapolation will be used.
+
+InterpolatingFunction::dmval: Input value {-4.98264} lies outside the range of data in the interpolating function. Extrapolation will be used.
+
+General::stop: Further output of InterpolatingFunction::dmval will be suppressed during this calculation.
+
+========================================
+Building no-wiggle input P(k)
+========================================
+inputpknw = /n/home12/cgarciaquintero/DESI/src/sMGPT/input/temp_pklin_ext_64878_nw.dat
+
+========================================
+Step 1: Linear theory: normal + NW  (src/1_LinearTheory.wl)
+========================================
+ 
+Running linear theory for normal and NW spectra
+Input file /n/home12/cgarciaquintero/DESI/src/sMGPT/input/temp_pklin_ext_64878.dat is a LCDM pk at zinput = 0
+Normal input k points = 888, kmin = 0.00001, kmax = 499.9999999999989
+NW input k points = 888, kmin = 0.00001, kmax = 499.9999999999989
+f(k=0)=0.6826138224244257
+Linear normal and NW PSL tables kept in memory.
+Finished step 1 in NumberForm[2.132989`6.780533609258753, {10, 2}] seconds.
+
+========================================
+Step 2: Combined P22, A, B/C: normal + NW  (src/2_P22type.wl)
+========================================
+Running combined P22, A, B/C functions
+input PS points = 888, kmin = 0.00001, kmax = 499.9999999999989
+Input kmin = 0.00001,  input kmax = 499.9999999999989
+Output files log-k spaced: kmin = 0.001,  kmax = 1.,  number of ks: 121
+Inner integration pmin = 0.00001,  pmax = 16.,  number of ps: 183
+Integrating 10 kernels
+Integrating 5 kernels
+Integrating 18 kernels
+Integrating P22 kernels: 10
+Integrating A kernels: 5
+Integrating B/C kernels: 18
+10: k=0.0016788040181225606,  time= 66.203047`8.272422971830439
+20: k=0.0029853826189179603,  time= 132.851157`8.574910334527011
+30: k=0.005308844442309885,  time= 199.859654`8.752270124714391
+40: k=0.009440608762859235,  time= 266.783808`8.8777044607583
+50: k=0.016788040181225608,  time= 333.796736`8.975027079152207
+60: k=0.029853826189179603,  time= 400.7733`9.054443774097388
+70: k=0.053088444423098846,  time= 467.612203`9.121430829660737
+80: k=0.09440608762859236,  time= 534.408047`9.179417982524438
+90: k=0.16788040181225605,  time= 601.726427`9.230944079024924
+100: k=0.298538261891796,  time= 669.340521`9.277192110915445
+110: k=0.5308844442309885,  time= 737.41364`9.319256160020679
+120: k=0.9440608762859236,  time= 806.083277`9.357924904870915
+Total combined normal+NW P22/A/B/C integration time = 812.930759 seconds
+P22/A/BandC normal and NW tables kept in memory.
+Finished step 2 in NumberForm[812.990362`9.36163039055987, {10, 2}] seconds.
+
+========================================
+Step 3: P13: normal + NW  (src/3_P13type.wl)
+========================================
+Running P13 functions
+normal input PS points = 888, kmin = 0.00001, kmax = 499.9999999999989
+NW input PS points = 888, kmin = 0.00001, kmax = 499.9999999999989
+Integrating 4 kernels
+
+                                              -34
+ParametricNDSolve::ndsz: At eta == -3.85186 10   , step size is effectively zero; singularity or stiff system suspected.
+
+                                              -34
+ParametricNDSolve::ndsz: At eta == -3.85186 10   , step size is effectively zero; singularity or stiff system suspected.
+
+                                              -34
+ParametricNDSolve::ndsz: At eta == -3.85186 10   , step size is effectively zero; singularity or stiff system suspected.
+
+General::stop: Further output of ParametricNDSolve::ndsz will be suppressed during this calculation.
+10: k=0.0016788040181225606,  time= 27.830786`7.896070465393885
+20: k=0.0029853826189179603,  time= 56.697462`8.205108612105548
+30: k=0.005308844442309885,  time= 86.1428060000000000001`8.386764007781949
+40: k=0.009440608762859235,  time= 115.855016`8.515459835022593
+50: k=0.016788040181225608,  time= 146.893879`8.618548692813063
+60: k=0.029853826189179603,  time= 177.809987`8.701501143702624
+70: k=0.053088444423098846,  time= 209.959983`8.773681522428205
+80: k=0.09440608762859236,  time= 242.621081`8.83647352689468
+90: k=0.16788040181225605,  time= 274.406667`8.889939652302322
+100: k=0.298538261891796,  time= 306.332428`8.93773796665257
+110: k=0.5308844442309885,  time= 340.87889`8.98414510050256
+120: k=0.9440608762859236,  time= 372.722553`9.022930665689344
+Total P13 normal+NW integration time = 376.090109 seconds
+P13 normal and NW tables kept in memory.
+ 
+Finished step 3 in NumberForm[376.122852`9.026874714038831, {10, 2}] seconds.
+
+========================================
+Step 4: Final AllFunctions tables  (src/4_Together.wl)
+========================================
+Building final AllFunctions tables from memory
+normal: kmin = 0.001, kmax = 1., k points = 121
+normal: f0=0.6826138224244257, sigma2=16.22885761689615, sigma2v=18.572227917433977
+All Imn normal functions stored in file outputs/BGS_BZMass/NoScreen/AllFunctions_BGS_BZMass_NoScreen.dat
+NW: kmin = 0.001, kmax = 1., k points = 121
+NW: f0=0.6826138224244257, sigma2=16.078554210246516, sigma2v=18.423057296820616
+All Imn NW functions stored in file outputs/BGS_BZMass/NoScreen/AllFunctions_BGS_BZMass_NoScreen_nw.dat
+Final tables written:
+outputs/BGS_BZMass/NoScreen/AllFunctions_BGS_BZMass_NoScreen.dat
+outputs/BGS_BZMass/NoScreen/AllFunctions_BGS_BZMass_NoScreen_nw.dat
+Finished step 4 in NumberForm[1.500932`6.627906010393651, {10, 2}] seconds.
+
+========================================
+Step 5: IR resummation and multipoles  (src/5_IRResummation.wl)
+========================================
+Running IR resummation and building P_ell(k) multipoles
+FileIni    = outputs/BGS_BZMass/NoScreen/AllFunctions_BGS_BZMass_NoScreen.dat
+FileIniNW  = outputs/BGS_BZMass/NoScreen/AllFunctions_BGS_BZMass_NoScreen_nw.dat
+IR parameters = <|b1 -> 1.6215433618068629, b2 -> 0.23677842354547154, bs2 -> -0.35516763531820733, b3nl -> 0.06314091294545908, alpha0 -> 0, alpha2 -> 0, alpha4 -> 0, ctilde -> 0, alphashot0 -> 1, alphashot2 -> 0, PshotP -> 5000.|>
+IR-resummed multipoles stored in file outputs/BGS_BZMass/NoScreen/multipoles_BGS_BZMass_NoScreen.dat
+Finished step 5 in NumberForm[2.602883`6.86699964043872, {10, 2}] seconds.
+
+========================================
+All done. Total time: 1201.22 seconds.
+========================================
