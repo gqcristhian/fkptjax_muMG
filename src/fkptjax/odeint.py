@@ -61,6 +61,13 @@ def odeint(
     y = np.array(ystart, dtype=float, copy=True)
     nvar = y.size
     x = float(x1)
+    # Non-finite inputs (a NaN growth template from a failed Boltzmann call upstream) must fail
+    # at once: with x = NaN the termination test (x - x2) * (x2 - x1) >= 0 is never true and
+    # abs(hnext) <= hmin never fires, so the loop would grind through all maxnsteps NaN steps
+    # (observed 2026-09-13: ~0.6 s per NaN step, 1.7 h per point, stalling a whole MPI chain).
+    # RuntimeError is what callers already catch for 'Too many steps' / 'stepsize underflow'.
+    if not (np.isfinite(x) and np.isfinite(x2) and np.all(np.isfinite(y))):
+        raise RuntimeError("non-finite initial condition or limits in odeint")
     h = copysign(abs(h1), x2 - x1)
 
     nok = 0
@@ -100,6 +107,9 @@ def odeint(
             nbad += 1
 
         y, x = ynew, xnew
+        # Same reason as the entry guard: a NaN abscissa or state can never reach x2.
+        if not (np.isfinite(x) and np.all(np.isfinite(y))):
+            raise RuntimeError("non-finite state in odeint")
 
         # Reached (or passed) the end?
         if (x - x2) * (x2 - x1) >= 0.0:
