@@ -222,6 +222,10 @@ def rkqs(
         # errmax = max_i |yerr_i / yscal_i| / eps
         errmax = float(np.max(np.abs(yerr / yscal)))
         errmax /= eps
+        # NaN derivatives from a finite start (e.g. a NaN growth template mid-integration): errmax is NaN, the step is
+        # never accepted, h shrinks to NaN and the underflow test xnew == x never fires, so the loop would never exit.
+        if not np.isfinite(errmax):
+            raise RuntimeError("non-finite derivatives in rkqs")
 
         if errmax <= 1.0:
             # accepted
