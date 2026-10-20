@@ -163,7 +163,7 @@ def secondOrderAB(eta, y, kf, k1, k2, P):
     """
     x = _x_from_triple(kf, k1, k2)
     f2 = bj.f1(eta, P)
-    fr = 2.0 - f2
+    fr = bj.friction(eta, P)
     mu_kf = bj.mu(eta, kf, P)
     src_A = bj.S2a(eta, x, k1, k2, P) + bj.S2FL(eta, x, k1, k2, P)
     src_B = bj.S2b(eta, x, k1, k2, P)

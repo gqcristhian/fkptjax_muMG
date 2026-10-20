@@ -308,14 +308,14 @@ def Kfuncs_to_tables(
         mirroring how ``mg_kernel_fn`` is passed fresh into ``full_shape.py``'s
         ``combine_bias_terms_spectrum3_poles`` on every call).
     w0, wa : float, default=-1.0, 0.0
-        CPL dark-energy equation of state, ``w(a) = w0 + wa*(1-a)``. Only consumed by the
-        ``HS`` and ``PHENOM``/``growth_index``/``growth_index_yukawa`` ``mu(k,eta)`` formulas
-        (see ``mg_jax.py``'s module docstring); every other model ignores them. The growth ODE's
-        own background (``ModelDerivatives.f1``) is always fixed flat LCDM regardless of these --
-        ``growth_index`` with ``gamma_0`` pinned to its GR value (``6/11``) is the way to isolate
-        a genuinely evolving dark-energy background's effect on growth, with no MG signal mixed
-        in, since its ``mu(a)`` formula is built from the true ``w0``/``wa`` Friedmann equation
-        evaluated relative to that fixed fiducial background.
+        CPL dark-energy equation of state, ``w(a) = w0 + wa*(1-a)``. Sets the
+        Friedmann background terms in the growth and kernel ODEs. Model-specific
+        ``mu(a, k)`` formulas retain their documented background assumptions; in
+        particular, the nDGP ``mu`` implementation remains flat-LambdaCDM-only.
+        For ``growth_index``, ``mu(a)`` is constructed so that
+        ``f = Omega_m**gamma`` solves this same CPL-background growth equation.
+        Consequently, fixing ``gamma_0=6/11`` is not generally pure GR away from
+        LambdaCDM; use ``model='GR'`` or ``model='LCDM'`` for ``mu=1``.
     """
 
     import jax
