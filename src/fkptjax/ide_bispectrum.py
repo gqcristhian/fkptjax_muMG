@@ -83,13 +83,17 @@ def get_calculator_cls():
             ``k_pkl_pklnw_fk`` (f(k)) are not used.
         model : str
             As FOLPS (only labels the FoG printout).
+        damping_ide : IDEKernelCoeffs, optional
+            Coefficients for the BAO damping of each leg (Gamma1, fPsi); default ``ide``. With
+            ``ide = eds_kernel_coefficients(c)`` and ``damping_ide = c``: EdS kernels, IDE damping.
         """
 
         _tables_cache = {}  # own Gauss-Legendre cache, not FOLPS's
 
-        def __init__(self, ide, model='EFT'):
+        def __init__(self, ide, model='EFT', damping_ide=None):
             super().__init__(model=model)
             self.ide = ide
+            self.damping_ide = ide if damping_ide is None else damping_ide
 
         def bispectrum(self, k1, k2, x12, mu1, phi, f, sigma2v, Sigma2, deltaSigma2,
                        bpars, qpar, qperp, k_pkl_pklnw_fk, damping='lor', interpolation_method='cubic',
@@ -112,7 +116,7 @@ def get_calculator_cls():
             def leg(kAP, muAP):
                 pk = self.interpolation_b(kAP, k_, pkl_, method=interpolation_method)
                 pknw = self.interpolation_b(kAP, k_, pklnw_, method=interpolation_method)
-                pkIR = pknw + (pk - pknw) * jnp.exp(-ir_sigma2_tot(muAP, Sigma2, deltaSigma2, ide) * kAP**2)
+                pkIR = pknw + (pk - pknw) * jnp.exp(-ir_sigma2_tot(muAP, Sigma2, deltaSigma2, self.damping_ide) * kAP**2)
                 Z1eft = b1 + fQ * muAP**2 - (c1 * muAP**2 + c2 * muAP**4) * kAP**2
                 return pkIR, Z1eft
 

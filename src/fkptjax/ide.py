@@ -456,6 +456,19 @@ def to_DMdilution_notation(c):
 # Kernels (notes Sec. 4.2-4.3)
 # ----------------------------------------------------------------------------
 
+def eds_kernel_coefficients(c):
+    """The EdS limit of the IDE kernel coefficients ``c``, for EdS-kernel loops with everything else IDE.
+
+    Gamma1 = L = F = S = 1, L' = F' = 0, WL = WF = WS = 0 and f = fQ (so f/fQ = 1): with these, :func:`F2_G2` and
+    :func:`F3K_G3K` reduce to the EdS kernels (F2 = alpha_s - 2/7 gamma12, G2 = alpha_s - 4/7 gamma12, ...). ``fQ``,
+    ``fPsi``, ``D`` and ``z_out`` are kept, so the linear growth rate (Kaiser term, table f0) is unchanged; pass the
+    original ``c`` wherever the IR damping is computed (``tables_to_pkmu(ide=...)``, the bispectrum's
+    ``damping_ide``), so only the second- and third-order kernels differ from the full IDE pipeline.
+    """
+    one, zero = jnp.ones_like(c.fQ), jnp.zeros_like(c.fQ)
+    return c._replace(f=c.fQ, Gamma1=one, L=one, Lp=zero, WL=zero, F=one, Fp=zero, WF=zero, S=one, WS=zero)
+
+
 def F2_G2(mu, ratio, c):
     """Second-order kernels F2 and G2 for a pair (k1, k2) (notes Sec. 4.2, eqs. 32, 34).
 
