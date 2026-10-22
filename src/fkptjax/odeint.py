@@ -131,6 +131,11 @@ SAFETY = 0.9
 PGROW  = -0.2
 PSHRNK = -0.25
 ERRCON = 1.89e-4
+# Cap on consecutive rejected attempts of one rkqs step. Numerical Recipes' loop has none: it
+# relies on the step shrinking to underflow, which a non-finite error estimate never reaches
+# (every comparison with NaN is False), so a source that overflows left the loop spinning for
+# ever (2026-10-19: the tabulated pole of an EFT_DE source, 3.8 million RHS calls and counting).
+MAX_REJECTIONS = 200
 
 def rkck(
     y: np.ndarray,
@@ -215,6 +220,7 @@ def rkqs(
     hnext : proposed next step
     """
     h = float(htry)
+    rejections = 0
 
     while True:
         ytemp, yerr = rkck(y, dydx, x, h, derivs)
@@ -223,11 +229,22 @@ def rkqs(
         errmax = float(np.max(np.abs(yerr / yscal)))
         errmax /= eps
 
+        if not np.isfinite(errmax):
+            # the step produced a non-finite state: no step size will fix a non-finite source, and
+            # the loop below would never exit (see MAX_REJECTIONS). RuntimeError is what the
+            # callers already catch for 'stepsize underflow' / 'Too many steps'.
+            raise RuntimeError(
+                f"non-finite error estimate in rkqs at x = {x:.6g}, h = {h:.3e} (non-finite source or state)")
+
         if errmax <= 1.0:
             # accepted
             break
 
         # rejected: shrink h
+        rejections += 1
+        if rejections > MAX_REJECTIONS:
+            raise RuntimeError(
+                f"{rejections} consecutive step rejections in rkqs at x = {x:.6g}, h = {h:.3e}")
         htemp = SAFETY * h * (errmax ** PSHRNK)
         if h >= 0.0:
             h = max(htemp, 0.1 * h)
