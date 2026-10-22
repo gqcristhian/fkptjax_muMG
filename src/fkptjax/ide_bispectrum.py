@@ -106,7 +106,13 @@ def get_calculator_cls():
                 raise ValueError("IDEBispectrumCalculator uses the IDE kernels; mg_kernel_fn must be None.")
             ide = self.ide
             fQ = ide.fQ
-            b1, b2, bs, c1, c2, Bshot, Pshot, X_FoG_b = bpars
+            # As FOLPS's split_bispectrum_pars: (..., Bshot, Pshot, Ashot, X_FoG), or the legacy 8-parameter vector
+            # whose constant term is tied, Ashot = Pshot**2.
+            if len(bpars) > 8:
+                b1, b2, bs, c1, c2, Bshot, Pshot, Ashot, X_FoG_b = bpars[:9]
+            else:
+                b1, b2, bs, c1, c2, Bshot, Pshot, X_FoG_b = bpars[:8]
+                Ashot = Pshot**2
 
             cosphi = jnp.cos(phi)
             k1AP, k2AP, k3AP, x12AP, x23AP, x31AP, mu1AP, mu2AP, mu3AP, _ = self.APtransforms(
@@ -133,7 +139,7 @@ def get_calculator_cls():
             shot = ((b1 * Bshot + Pshot * fQ * mu1AP**2) * Z1eft1 * pkIR1
                     + (b1 * Bshot + Pshot * fQ * mu2AP**2) * Z1eft2 * pkIR2
                     + (b1 * Bshot + Pshot * fQ * mu3AP**2) * Z1eft3 * pkIR3
-                    + Pshot**2)
+                    + Ashot)
             toret = (W * (B12 + B23 + B31) + shot) / (qpar * qperp**2)**2
 
             # desilike's redshift-smearing hook (``_patch_folps_bispectrum`` wraps FOLPS's own
@@ -160,9 +166,9 @@ def ide_bispectrum_poles(ide, bpars, k1k2, k_pkl_pklnw, qpar=1., qper=1., multip
     ide : IDEKernelCoeffs
         Coefficients at the output redshift (scalars), e.g. ``ide_kernel_coeffs(z, bg)``;
         the same object the power-spectrum tables were built with.
-    bpars : array, (8,)
-        FOLPS bispectrum nuisance vector (b1, b2, bs, c1, c2, Bshot, Pshot, X_FoG), in
-        ``bias_scheme``'s convention.
+    bpars : array, (9,) or (8,)
+        FOLPS bispectrum nuisance vector (b1, b2, bs, c1, c2, Bshot, Pshot, Ashot, X_FoG), in
+        ``bias_scheme``'s convention, or the legacy (b1, b2, bs, c1, c2, Bshot, Pshot, X_FoG), with Ashot = Pshot**2.
     k1k2 : array
         (N, 2) pairs (k1, k2) for ``basis='sugiyama'``; (N, 3) triplets (k1, k2, k3) for
         ``basis='scoccimarro'``.
