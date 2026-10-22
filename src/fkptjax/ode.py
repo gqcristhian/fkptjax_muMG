@@ -7,6 +7,18 @@ import scipy.integrate
 from fkptjax.types import Float64NDArray
 from fkptjax.odeint import odeint
 
+def eftde_source_from_h(h1, h3, h5):
+    """The HDKI/EFT_DE source inputs of :class:`ModelDerivatives` (and of ``Kfuncs_to_tables``) from callables
+    ``eta -> h1, h3, h5`` of the h-function form, ``mu = h1 (1 + k^2 h5) / (1 + k^2 h3)``: the special case
+    ``D0 = 1, N3 = h3, N5 = h5`` of the finite representation ``mu = h1 (D0 + N5 k^2) / (D0 + N3 k^2)``.
+
+    For diagnostics, and for sources that only exist as h-functions. A spline of h3 / h5 through their pole
+    (where the quasi-static mass m_QS^2 crosses zero) is as wrong here as it ever was: for anything that crosses
+    it, use the finite coefficients of cosmoprimo's ``Background.eft_interpolators()`` instead.
+    """
+    return dict(eftde_h1_interp=h1, eftde_d0_interp=lambda eta: 1.0, eftde_n3_interp=h3, eftde_n5_interp=h5)
+
+
 class ModelDerivatives:
     """Hu-Sawicki f(R) modified gravity model for fkPT calculations.
 
@@ -97,13 +109,19 @@ class ModelDerivatives:
         gamma_a: float = 0.0,
         t_k: float = 1000.0,
         d_s: float = 0.0001,
-        # --- EFTCAMB_HORNDESKI: 1D interpolators over eta=ln(a) for h1, h3, h5
-        # These are built from EFTCAMB's get_eft_functions() output.
-        # mu(k, eta) = h1(eta) * (1 + k^2 * h5(eta)) / (1 + k^2 * h3(eta))
-        # GR limit: h1=1, h3=0, h5=0  ->  mu=1
-        eftcamb_h1_interp=None,   # callable: eta -> h1(eta)
-        eftcamb_h3_interp=None,   # callable: eta -> h3(eta)
-        eftcamb_h5_interp=None,   # callable: eta -> h5(eta)
+        # --- HDKI/EFT_DE: the quasi-static source as FINITE background coefficients, callables over
+        # eta = ln a (cosmoprimo's Background.eft_interpolators(), 2026-10-22):
+        #   mu(k, eta) = h1(eta) * (D0(eta) + N5(eta) k^2) / (D0(eta) + N3(eta) k^2),
+        # h1 = (1 + alpha_T) / M*^2, D0 = a^2 H^2 m_QS^2 [(h/Mpc)^2], N3 = cs2num and N5 the numerators
+        # of the former h3 = N3 / D0 and h5 = N5 / D0 (eqs. 64-68 of arXiv:1902.06978): smooth where
+        # h3, h5 have their pole (m_QS^2 = 0), which no spline of h3, h5 represents. N5 == N3 (no-slip,
+        # alpha_1 = 0; exact GR) takes the analytic branch mu = h1 at every k (_eftde_mu). A missing
+        # source is an error, not GR; callables of the h-function form are converted with
+        # eftde_source_from_h(h1, h3, h5), the special case D0 = 1, N3 = h3, N5 = h5.
+        eftde_h1_interp=None,     # callable: eta -> h1(eta)
+        eftde_d0_interp=None,     # callable: eta -> D0(eta)
+        eftde_n3_interp=None,     # callable: eta -> N3(eta)
+        eftde_n5_interp=None,     # callable: eta -> N5(eta)
         # --- internal massive-neutrino source table
         # This is populated upstream when the single public option is enabled.
         # ``None`` means mu_nu=1.
@@ -195,10 +213,11 @@ class ModelDerivatives:
         self.t_k = float(t_k)
         self.d_s = float(d_s)
 
-        # EFTCAMB_HORNDESKI: 1D interpolators eta -> h1/h3/h5
-        self.eftcamb_h1_interp = eftcamb_h1_interp
-        self.eftcamb_h3_interp = eftcamb_h3_interp
-        self.eftcamb_h5_interp = eftcamb_h5_interp
+        # HDKI/EFT_DE: 1D interpolators eta -> h1 / D0 / N3 / N5
+        self.eftde_h1_interp = eftde_h1_interp
+        self.eftde_d0_interp = eftde_d0_interp
+        self.eftde_n3_interp = eftde_n3_interp
+        self.eftde_n5_interp = eftde_n5_interp
 
         # Internal massive-neutrino source correction. This is data supplied
         # by the top-level theory wrapper, not a second user-facing switch.
@@ -236,6 +255,16 @@ class ModelDerivatives:
                 "Massive-neutrino FKPT corrections are not implemented in the "
                 "numba PHENOM/binning RHS. Use use_numba=False."
             )
+
+        # HDKI/EFT_DE without its source used to evaluate mu = 1 silently (the GR fallback of mu_mg);
+        # since 2026-10-22 that is an error here, at construction (issue_eftde_full_kernels.md).
+        if (str(self.model).strip().upper() == "HDKI"
+                and str(self.mg_variant).strip().lower() in ("eft_de", "eftde")
+                and not self._eftde_has_source()):
+            raise ValueError(
+                "model='HDKI', mg_variant='EFT_DE' needs the quasi-static source: eftde_h1_interp, eftde_d0_interp, "
+                "eftde_n3_interp and eftde_n5_interp (cosmoprimo's Background.eft_interpolators(); callables of the "
+                "h-function form through eftde_source_from_h). For GR use model='LCDM'.")
 
         # Internal diagnostic / optimization flag used by the FKPT rescaling
         # branch.  It describes the MG part only; a supplied neutrino_correction
@@ -313,11 +342,7 @@ class ModelDerivatives:
         if model != "HDKI" or variant not in ("eft_de", "eftde"):
             return False
 
-        if (
-            self.eftcamb_h1_interp is None
-            or self.eftcamb_h3_interp is None
-            or self.eftcamb_h5_interp is None
-        ):
+        if not self._eftde_has_source():
             return False
 
         k_pivot = self._EFTDE_K_PIVOT
@@ -327,25 +352,16 @@ class ModelDerivatives:
         k2_pivot = k_pivot**2
 
         for eta in etabins:
-            h1 = self.eftcamb_h1_interp(eta)
-            h3 = self.eftcamb_h3_interp(eta)
-            h5 = self.eftcamb_h5_interp(eta)
-
-            denom_k = 1.0 + k2 * h3
-            denom_pivot = 1.0 + k2_pivot * h3
-            if (
-                not np.all(np.isfinite([h1, h3, h5]))
-                or not np.all(np.isfinite(denom_k))
-                or not np.isfinite(denom_pivot)
-                or np.any(np.abs(denom_k) < 1.0e-12)
-                or np.abs(denom_pivot) < 1.0e-12
-            ):
+            h1, D0, N3, N5 = self._eftde_coefficients(eta)
+            if not np.all(np.isfinite(np.asarray([h1, D0, N3, N5], dtype=float))):
                 return True
 
-            mu_k = h1 * (1.0 + k2 * h5) / denom_k
-            mu_pivot = h1 * (1.0 + k2_pivot * h5) / denom_pivot
+            mu_k = self._eftde_mu(h1, D0, N3, N5, k2)
+            mu_pivot = self._eftde_mu(h1, D0, N3, N5, k2_pivot)
 
-            if not np.all(np.isfinite(mu_k)) or not np.isfinite(mu_pivot):
+            # a non-finite source (the pole of the quasi-static expression at one of the sampled k)
+            # is classified scale-dependent, as before: the k-dependent branch then shows it
+            if not np.all(np.isfinite(mu_k)) or not np.all(np.isfinite(mu_pivot)):
                 return True
 
             normalization = max(np.abs(float(mu_pivot)), 1.0e-12)
@@ -356,6 +372,46 @@ class ModelDerivatives:
                 return True
 
         return False
+
+    _EFTDE_SOURCE_NAMES = ('eftde_h1_interp', 'eftde_d0_interp', 'eftde_n3_interp', 'eftde_n5_interp')
+
+    def _eftde_has_source(self) -> bool:
+        """Whether the EFT_DE source was supplied: all four of h1, D0, N3, N5."""
+        return all(getattr(self, name, None) is not None for name in self._EFTDE_SOURCE_NAMES)
+
+    def _eftde_coefficients(self, eta):
+        """``(h1, D0, N3, N5)`` at ``eta``."""
+        return (self.eftde_h1_interp(eta), self.eftde_d0_interp(eta),
+                self.eftde_n3_interp(eta), self.eftde_n5_interp(eta))
+
+    @staticmethod
+    def _eftde_mu(h1, D0, N3, N5, k2):
+        """``h1 (D0 + N5 k^2) / (D0 + N3 k^2)``, with the analytic branch ``mu = h1`` where ``N5 == N3``.
+
+        ``N5 == N3`` is exact no-slip (alpha_1 = 0, bit for bit: cosmoprimo makes N5 the same array as
+        N3 there) and exact GR (D0 = N3 = N5 = 0, where the ratio would be 0 / 0): the pole of the
+        quasi-static expression cancels and mu = h1 at every k. Anywhere else a vanishing denominator is
+        the genuine pole of the expression, left non-finite so that it surfaces (NaN tables) rather than
+        being silently regularised.
+        """
+        h1, D0, N3, N5, k2 = (np.asarray(v, dtype=float) for v in (h1, D0, N3, N5, k2))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = (D0 + N5 * k2) / (D0 + N3 * k2)
+        return h1 * np.where(N5 == N3, 1.0, ratio)
+
+    def eftde_grids(self, eta_grid):
+        """The EFT_DE source sampled on ``eta_grid`` for the JAX right-hand side (the ``eftde_*`` inputs of
+        :func:`fkptjax.mg_jax.pack_constants_jnp`), with this object's own scale-dependence verdict and pivot,
+        so that the two paths evaluate the same source."""
+        eta_grid = np.asarray(eta_grid, dtype=float).ravel()
+        if not self._eftde_has_source():
+            raise ValueError("eftde_grids: the EFT_DE source (h1, D0, N3, N5) was not supplied")
+        rows = np.array([[float(np.asarray(v, dtype=float).ravel()[0]) for v in self._eftde_coefficients(eta)]
+                         for eta in eta_grid])
+        return dict(eftde_eta_grid=eta_grid, eftde_h1_grid=rows[:, 0], eftde_d0_grid=rows[:, 1],
+                    eftde_n3_grid=rows[:, 2], eftde_n5_grid=rows[:, 3],
+                    eftde_scale_dependent=bool(self.is_EFTDE_scale_dependent),
+                    eftde_k2_pivot=float(self._EFTDE_K_PIVOT) ** 2)
 
     def _isitgr_k_windows(self, k):
         # Mirrors Fortran ISiTGR_k_windows
@@ -466,7 +522,7 @@ class ModelDerivatives:
         #   - BZ_Mass: (1 + mu_kinf_BZmass * X) / (1 + X),
         #              X = (k * lambda_a_BZmass * lambda_dS_BZmass / (D(a) * a))^2,
         #              D(a) = lambda_dS_BZmass * a^-3 + lambda_a_BZmass
-        #   - EFT_DE:  EFTCAMB Horndeski μ(k,eta) from h1/h3/h5 interpolators
+        #   - EFT_DE:  Horndeski μ(k,eta) from the finite h1/D0/N3/N5 interpolators
         # ------------------------------------------------------------
         if model == "HDKI":
             v = str(getattr(self, "mg_variant", "mu_OmDE")).strip().lower()
@@ -496,23 +552,17 @@ class ModelDerivatives:
                 return (1.0 + self.mu_kinf_BZmass * X) / (1.0 + X)
 
             if v in ("eft_de", "eftde"):
-                if (
-                    self.eftcamb_h1_interp is None
-                    or self.eftcamb_h3_interp is None
-                    or self.eftcamb_h5_interp is None
-                ):
-                    return 1.0   # GR fallback
-                h1 = self.eftcamb_h1_interp(eta)
-                h3 = self.eftcamb_h3_interp(eta)
-                h5 = self.eftcamb_h5_interp(eta)
+                if not self._eftde_has_source():
+                    raise ValueError("HDKI/EFT_DE: the quasi-static source is missing (no silent GR fallback)")
+                h1, D0, N3, N5 = self._eftde_coefficients(eta)
                 if self.is_EFTDE_scale_dependent:
-                    return h1 * (1.0 + k2 * h5) / (1.0 + k2 * h3)
+                    return self._eftde_mu(h1, D0, N3, N5, k2)
 
                 # The model is effectively scale-independent over DESI scales.
                 # Use the exact EFTDE source at the representative DESI scale,
                 # rather than its k -> 0 or k -> infinity limit.
                 k2_pivot = self._EFTDE_K_PIVOT**2
-                return h1 * (1.0 + k2_pivot * h5) / (1.0 + k2_pivot * h3)
+                return self._eftde_mu(h1, D0, N3, N5, k2_pivot)
 
             raise ValueError(
                 f"Unknown HDKI mg_variant={v!r} "
