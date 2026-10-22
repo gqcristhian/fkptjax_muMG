@@ -339,13 +339,26 @@ def _Ea2_de_scaling(eta, P):
 
 def f1(eta, P):
     """(3/2) Omega_m(a), generalized to a w0wa (CPL) dark energy background instead of the
-    pure-LCDM special case -- see _Ea2_de_scaling. Used as the friction/source coefficient in
+    pure-LCDM special case -- see _Ea2_de_scaling. Used as the Poisson-source coefficient in
     every beyond-EdS kernel-constant equation (S2a/S2b/S3IIplus/... below) and the growth ODE,
     for every model, regardless of that model's own mu(a,k) formula."""
     a = jnp.exp(eta)
     Ea2, _ = _Ea2_de_scaling(eta, P)
     Om = P.om * a ** (-3.0) / Ea2
     return 1.5 * Om
+
+
+def friction(eta, P):
+    """Return ``2 + d ln H / d ln a`` for the matter+curvature+CPL background."""
+    a = jnp.exp(eta)
+    Ea2, de_scaling = _Ea2_de_scaling(eta, P)
+    matter = P.om * a ** (-3.0)
+    curvature = (1.0 - P.om - P.ol) * a ** (-2.0)
+    dark_energy = P.ol * de_scaling
+    w_de = P.w0 + P.wa * (1.0 - a)
+    return 2.0 - (
+        1.5 * matter + curvature + 1.5 * (1.0 + w_de) * dark_energy
+    ) / Ea2
 
 
 def kpp(x, k, p):
@@ -508,8 +521,12 @@ def _mu_eft_de(eta, k, P):
 
 
 def _growth_index_mu(eta, P):
-    """Scale-independent ISiTGR growth-index mu(a); shared by growth_index
-    and growth_index_yukawa (which then gates it with a k-dependent window).
+    """ISiTGR growth-index ``mu(a)`` for the shared CPL background.
+
+    This expression follows from substituting ``f = Omega_m**gamma`` into the
+    growth equation with the same ``2 + d ln H/d ln a`` used by the ODE below.
+    It is shared by ``growth_index`` and ``growth_index_yukawa`` (which then
+    gates it with a k-dependent window).
     """
     a = jnp.exp(eta)
     ok0 = 1.0 - P.om - P.ol
@@ -673,11 +690,11 @@ def firstOrder(x, Y, k_arr, P):
     """Y shape (2, nk); returns (2, nk).  Mirrors ModelDerivatives.firstOrder."""
     f1x = f1(x, P)
     mu_arr = mu(x, k_arr, P)
-    return jnp.stack([Y[1], f1x * mu_arr * Y[0] - (2.0 - f1x) * Y[1]])
+    return jnp.stack([Y[1], f1x * mu_arr * Y[0] - friction(x, P) * Y[1]])
 
 
 def secondOrder(eta, y, x, k, p, P):
-    f2 = f1(eta, P); fr = 2.0 - f2
+    f2 = f1(eta, P); fr = friction(eta, P)
     kf = kpp(x, k, p)
     src = SD2(eta, x, k, p, P)
     return jnp.stack([
@@ -688,7 +705,7 @@ def secondOrder(eta, y, x, k, p, P):
 
 
 def thirdOrder(eta, y, x, k, p, P):
-    f1eta = f1(eta, P); f2eta = 2.0 - f1eta
+    f1eta = f1(eta, P); f2eta = friction(eta, P)
     kplusp = kpp(x, k, p); kpluspm = kpp(-x, k, p)
     Dpk = y[0]; Dpp = y[2]; D2f = y[4]; D2mf = y[6]
     return jnp.stack([

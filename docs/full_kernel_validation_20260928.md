@@ -154,10 +154,11 @@ Parameter objects. `growth_source='template'` consumes ISiTGR's linear f(k).
   histories, or trained ingredient/emulator accuracy. The archived ingredient
   emulator script references a now-missing provider; its mesh/solver comparison
   was reproduced without that dependency.
-- A static audit finds further work needed before claiming general w0/wa or
-  curved-background support: the wrapper assumes ol=1-Om, does not generally
-  forward cosmological w0/wa, and the underlying ODE friction still uses
-  2-3 Omega_m(a)/2. That is the flat LambdaCDM friction, not general 2+H'/H.
+- This archived run did not certify general w0/wa or curved-background support:
+  the wrapper assumes ol=1-Om and does not generally forward cosmological
+  w0/wa. At the time of the audit, the underlying ODE also used the flat-LambdaCDM
+  friction 2-3 Omega_m(a)/2; that defect has since been corrected and tested
+  separately, but the correction does not retroactively broaden this certification.
 - sMGPT in this workspace has no bispectrum implementation to provide an
   independent full B000/B202 reference. Bispectrum validation checks its
   underlying independent kernels, the Z2 equation, callback routing, finite

@@ -239,6 +239,16 @@ class ModelDerivatives:
             if (_bnb.HAVE_NUMBA
                     and str(self.model).upper() == "PHENOM"
                     and str(self.mg_variant).strip().lower() == "binning"):
+                is_flat_lcdm = (
+                    self.w0 == -1.0
+                    and self.wa == 0.0
+                    and np.isclose(self.om + self.ol, 1.0, rtol=0.0, atol=1.0e-12)
+                )
+                if not is_flat_lcdm:
+                    raise NotImplementedError(
+                        "The numba PHENOM/binning RHS supports only a flat LambdaCDM "
+                        "background. Use use_numba=False for CPL or curved backgrounds."
+                    )
                 self._bnb = _bnb
                 self._nb_P = _bnb.pack_constants(
                     om=self.om, ol=self.ol,
@@ -747,7 +757,7 @@ class ModelDerivatives:
         return Ea2, de_scaling
 
     def f1(self, eta: Union[float, Float64NDArray]) -> Union[float, Float64NDArray]:
-        """Compute logarithmic growth rate f₁(η) = d ln D/d ln a.
+        """Compute the Poisson-source coefficient ``(3/2) Omega_m(eta)``.
 
         Parameters
         ----------
@@ -758,7 +768,7 @@ class ModelDerivatives:
         -------
         float or ndarray
             (3/2) Omega_m(a), generalized to a w0wa (CPL) dark energy background instead of
-            the pure-LCDM special case -- see _Ea2_de_scaling. Used as the friction/source
+            the pure-LCDM special case -- see _Ea2_de_scaling. Used as the Poisson-source
             coefficient in every growth/beyond-EdS kernel-constant ODE below, for every
             model, regardless of that model's own mu(a,k) formula.
 
@@ -770,6 +780,20 @@ class ModelDerivatives:
         Ea2, _ = self._Ea2_de_scaling(eta)
         Om = self.om * np.power(a, -3.0) / Ea2
         return 1.5 * Om
+
+    def friction(
+        self, eta: Union[float, Float64NDArray]
+    ) -> Union[float, Float64NDArray]:
+        """Return ``2 + d ln H / d ln a`` for the matter+curvature+CPL background."""
+        a = np.exp(eta)
+        Ea2, de_scaling = self._Ea2_de_scaling(eta)
+        matter = self.om * np.power(a, -3.0)
+        curvature = (1.0 - self.om - self.ol) * np.power(a, -2.0)
+        dark_energy = self.ol * de_scaling
+        w_de = self.w0 + self.wa * (1.0 - a)
+        return 2.0 - (
+            1.5 * matter + curvature + 1.5 * (1.0 + w_de) * dark_energy
+        ) / Ea2
 
     def kpp(self, x: Union[float, Float64NDArray], k: Union[float, Float64NDArray], p: Union[float, Float64NDArray]) -> Union[float, Float64NDArray]:
         """Compute magnitude of vector sum |k + p| given k, p, and cosine x = k·p/(kp).
@@ -1162,12 +1186,12 @@ class ModelDerivatives:
         Notes
         -----
         Implements derivsFirstOrder from csrc/gsm_diffeqs.c.
-        The second-order ODE is: D'' + (2-f₁)D' - f₁μ(k)D = 0.
+        The second-order ODE is: D'' + (2 + d ln H/d ln a)D' - f₁μ(k)D = 0.
         """
         if self._use_numba_binning:
             return self._bnb.nb_firstOrder(x, np.atleast_2d(y), np.atleast_1d(k).astype(np.float64), self._nb_P)
         f1x = self.f1(x)
-        return np.array([y[1], f1x * self.mu(x, k) * y[0] - (2 - f1x) * y[1]])
+        return np.array([y[1], f1x * self.mu(x, k) * y[0] - self.friction(x) * y[1]])
 
     def secondOrder(self, eta: float, y: Float64NDArray, x: float, k: float, p: float) -> Float64NDArray:
         """
@@ -1178,7 +1202,7 @@ class ModelDerivatives:
         if self._use_numba_binning:
             return self._bnb.nb_secondOrder(eta, np.asarray(y, dtype=np.float64), x, k, p, self._nb_P)
         f2 = self.f1(eta)       # in your code: f1(eta) = 3/2 * Omega_m = notebook's f2
-        f1 = 2.0 - f2           # friction term = 2 + H'/H = 2 - 3/2 Omega_m = notebook's f1
+        f1 = self.friction(eta)
 
         kf = float(self.kpp(x, k, p))
         src = self.SD2(eta, x, k, p)   # = S2a - x^2 S2b + S2FL (matches notebook)
@@ -1231,7 +1255,7 @@ class ModelDerivatives:
         if self._use_numba_binning:
             return self._bnb.nb_thirdOrder(eta, np.asarray(y, dtype=np.float64), x, k, p, self._nb_P)
         f1eta = self.f1(eta)
-        f2eta = 2 - f1eta
+        f2eta = self.friction(eta)
         kplusp = self.kpp(x, k, p)
         kpluspm = self.kpp(-x, k, p)
         Dpk = y[0]

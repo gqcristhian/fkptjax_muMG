@@ -228,13 +228,13 @@ def rkqs(
         # errmax = max_i |yerr_i / yscal_i| / eps
         errmax = float(np.max(np.abs(yerr / yscal)))
         errmax /= eps
-
+        # NaN derivatives from a finite start (e.g. a NaN growth template mid-integration), or a source that
+        # overflows (the tabulated pole of an EFT_DE h3 / h5 spline): errmax is NaN, the step is never accepted,
+        # h shrinks to NaN and the underflow test xnew == x never fires, so the loop would never exit (see also
+        # MAX_REJECTIONS). RuntimeError is what the callers already catch for 'stepsize underflow' / 'Too many steps'.
         if not np.isfinite(errmax):
-            # the step produced a non-finite state: no step size will fix a non-finite source, and
-            # the loop below would never exit (see MAX_REJECTIONS). RuntimeError is what the
-            # callers already catch for 'stepsize underflow' / 'Too many steps'.
             raise RuntimeError(
-                f"non-finite error estimate in rkqs at x = {x:.6g}, h = {h:.3e} (non-finite source or state)")
+                f"non-finite derivatives or error estimate in rkqs at x = {x:.6g}, h = {h:.3e}")
 
         if errmax <= 1.0:
             # accepted

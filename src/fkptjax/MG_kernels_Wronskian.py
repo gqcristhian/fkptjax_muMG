@@ -84,7 +84,7 @@ def _homogeneous_rhs(kf, P):
     """RHS of D'' + fr*D' - f2*mu(eta,kf)*D = 0 (diffrax 3-arg convention)."""
     def rhs(eta, y, args):
         f2 = bj.f1(eta, P)
-        fr = 2.0 - f2
+        fr = bj.friction(eta, P)
         return jnp.stack([y[1], f2 * bj.mu(eta, kf, P) * y[0] - fr * y[1]])
     return rhs
 
