@@ -237,9 +237,10 @@ def Kfuncs_to_tables(
     d_s: float = 0.0001,
     w0: float = -1.0,
     wa: float = 0.0,
-    eftcamb_h1_interp=None,
-    eftcamb_h3_interp=None,
-    eftcamb_h5_interp=None,
+    eftde_h1_interp=None,
+    eftde_d0_interp=None,
+    eftde_n3_interp=None,
+    eftde_n5_interp=None,
     rbao: float = 104.0,
     pmax_bao: float = 0.4,
     Np_bao: int = 100,
@@ -366,9 +367,10 @@ def Kfuncs_to_tables(
             scale_bins=bool(scale_bins), k_TGR=float(k_TGR), k_S=float(k_S), k_c=float(k_c), k_tw=float(k_tw),
             gamma_0=float(gamma_0), gamma_a=float(gamma_a), t_k=float(t_k), d_s=float(d_s),
             w0=float(w0), wa=float(wa),
-            eftcamb_h1_interp=eftcamb_h1_interp,
-            eftcamb_h3_interp=eftcamb_h3_interp,
-            eftcamb_h5_interp=eftcamb_h5_interp,
+            eftde_h1_interp=eftde_h1_interp,
+            eftde_d0_interp=eftde_d0_interp,
+            eftde_n3_interp=eftde_n3_interp,
+            eftde_n5_interp=eftde_n5_interp,
             neutrino_correction=neutrino_correction,
             # use_numba=bool(use_numba),
         )
@@ -591,6 +593,15 @@ def Kfuncs_to_tables(
         from fkptjax import MG_kernels as _mgk
 
         kind = _resolve_mg_kind(model, mg_variant)
+        # HDKI/EFT_DE: the per-triangle kernels read the source from mg_jax's eftde_* grids, so
+        # sample the callables given to this builder onto an eta grid covering the integration
+        # range (with the numpy path's own scale-dependence verdict and pivot). Without this the
+        # full kernels silently fell back to GR (h1 = 1, h3 = h5 = 0) while the linear growth
+        # used the EFT_DE source (issue of 2026-10-22, `issue_eftde_full_kernels.md`).
+        eftde_kwargs = {}
+        if kind == _bj.EFT_DE:
+            derivs_eft, _ = _get_derivs_solver()     # raises if the EFT_DE source is missing
+            eftde_kwargs = derivs_eft.eftde_grids(np.linspace(float(xnow) - 0.2, 0.0, 512))
         P_mg = _bj.pack_constants_jnp(
             om=Om, ol=1.0 - Om, kind=kind,
             mu1=mu1, mu2=mu2, mu3=mu3, mu4=mu4,
@@ -602,7 +613,8 @@ def Kfuncs_to_tables(
             beta_1=beta_1, lambda_1=lambda_1, exp_s=exp_s,
             w0=w0, wa=wa,
             gamma_0=gamma_0, gamma_a=gamma_a, t_k=t_k, d_s=d_s,
-            neutrino_correction=neutrino_correction)
+            neutrino_correction=neutrino_correction,
+            **eftde_kwargs)
         xstop = jnp.log(1.0 / (1.0 + jnp.asarray(z, dtype=jnp.float64)))
 
         k_ext_q = calculator.logk_grid_jax
@@ -813,7 +825,8 @@ def Kfuncs_to_tables_jax(
     mu0=0.0,
     beta_1=1.0, lambda_1=1.0, exp_s=1.0,
     mu_kinf_BZmass=1.0, lambda_a_BZmass=0.0, lambda_dS_BZmass=0.0,
-    eftde_eta_grid=None, eftde_h1_grid=None, eftde_h3_grid=None, eftde_h5_grid=None,
+    eftde_eta_grid=None, eftde_h1_grid=None,
+    eftde_d0_grid=None, eftde_n3_grid=None, eftde_n5_grid=None,
     eftde_scale_dependent=True, eftde_k2_pivot=0.01,
     gamma_0=0.54545, gamma_a=0.0, t_k=1000.0, d_s=0.0001,
 ):
@@ -827,7 +840,8 @@ def Kfuncs_to_tables_jax(
     ``model`` and ``mg_variant`` are STATIC: they choose which mu expression
     is traced. See :mod:`fkptjax.mg_jax`'s module docstring for the exact
     mu(k,eta) formula used by each and for the ``eftde_*`` grid convention
-    (EFT_DE takes h1/h3/h5(eta) pre-sampled on a grid, not callables).
+    (EFT_DE takes the finite coefficients h1/D0/N3/N5(eta) pre-sampled on a grid,
+    not callables; ``ode.ModelDerivatives.eftde_grids`` samples them from the callables).
 
     Same physics/outputs as :func:`Kfuncs_to_tables`, but the growth and
     beyond-EdS kernel ODEs are integrated with diffrax (``fkptjax.jax_ode``) on
@@ -950,7 +964,7 @@ def Kfuncs_to_tables_jax(
         r_c=r_c, mu0=mu0,
         beta_1=beta_1, lambda_1=lambda_1, exp_s=exp_s,
         eftde_eta_grid=eftde_eta_grid, eftde_h1_grid=eftde_h1_grid,
-        eftde_h3_grid=eftde_h3_grid, eftde_h5_grid=eftde_h5_grid,
+        eftde_d0_grid=eftde_d0_grid, eftde_n3_grid=eftde_n3_grid, eftde_n5_grid=eftde_n5_grid,
         eftde_scale_dependent=eftde_scale_dependent, eftde_k2_pivot=eftde_k2_pivot,
         gamma_0=gamma_0, gamma_a=gamma_a, t_k=t_k, d_s=d_s)
     xstop = jnp.log(1.0 / (1.0 + jnp.asarray(z, dtype=jnp.float64)))

@@ -34,6 +34,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# fkptjax.MG_kernels (the per-triangle kernels of fkpt_approximation=False) and fkptjax.jax_ode
+# (Kfuncs_to_tables_jax) import diffrax at module level; the eager fkpt-approximation route does not need it.
+kernels = [
+    "diffrax>=0.6",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",

@@ -48,19 +48,28 @@ term for term:
     Sigma == 1 identically for this model, so there is no Sigma sector.
 
 ``'eft_de'``
-    HDKI/EFT_DE, EFTCAMB Horndeski mu from tabulated h1/h3/h5(eta)::
+    HDKI/EFT_DE, EFTCAMB Horndeski mu from tabulated FINITE coefficients
+    h1/D0/N3/N5(eta) (cosmoprimo's ``Background.eft_interpolators(representation=
+    'finite')``, the default since 2026-10-22)::
 
-        mu(k,eta) = h1(eta) * (1 + k^2 h5(eta)) / (1 + k^2 h3(eta))
+        mu(k,eta) = h1(eta) * (D0(eta) + N5(eta) k^2) / (D0(eta) + N3(eta) k^2)
 
-    The h1/h3/h5(eta) callables ``ode.py`` accepts are not JAX-traceable in
-    general, so this module instead takes them pre-sampled on an eta grid
-    (``eftde_eta_grid``/``eftde_h1_grid``/``eftde_h3_grid``/``eftde_h5_grid``)
-    and interpolates with ``jnp.interp``.  ``eftde_scale_dependent`` (STATIC,
-    mirrors ``ode.py``'s ``is_EFTDE_scale_dependent``) picks between the exact
-    k-dependent expression and the fixed-pivot (``eftde_k2_pivot``, default
-    ``k=0.1``) scale-independent proxy used for effectively-scale-independent
-    parameter points.  ``None`` grids (the default) fall back to GR (mu=1),
-    matching ``ode.py``'s missing-interpolator fallback.
+    D0 = a^2 H^2 m_QS^2 [(h/Mpc)^2], N3 = cs2num and N5 are the denominator and
+    numerators of the former h3 = N3 / D0, h5 = N5 / D0, and are smooth where
+    those have their pole (m_QS^2 = 0); a source of the h-function form is the
+    special case D0 = 1, N3 = h3, N5 = h5 (``ode.eftde_source_from_h``).
+    N5 == N3 (exact no-slip, exact GR) takes the analytic branch mu = h1.
+
+    The callables ``ode.py`` accepts are not JAX-traceable in general, so this
+    module instead takes them pre-sampled on an eta grid (``eftde_eta_grid``/
+    ``eftde_h1_grid``/``eftde_d0_grid``/``eftde_n3_grid``/``eftde_n5_grid``;
+    ``ode.ModelDerivatives.eftde_grids`` builds them) and interpolates with
+    ``jnp.interp``.  ``eftde_scale_dependent`` (STATIC, mirrors ``ode.py``'s
+    ``is_EFTDE_scale_dependent``) picks between the exact k-dependent expression
+    and the fixed-pivot (``eftde_k2_pivot``, default ``k=0.1``) scale-independent
+    proxy used for effectively-scale-independent parameter points.  Missing
+    grids are an error (since 2026-10-22; they used to fall back to GR
+    silently, see ``MGConstants.__post_init__``).
 
 ``'binning'``
     PHENOM/binning: four binned ``mu_i``, in two redshift bins x two k bins
@@ -160,11 +169,12 @@ class MGConstants:
     lambda_a: Any = 0.0
     lambda_dS: Any = 0.0
 
-    # HDKI/EFT_DE: h1/h3/h5(eta), pre-sampled on a common eta grid.
+    # HDKI/EFT_DE: h1/D0/N3/N5(eta), pre-sampled on a common eta grid.
     eftde_eta_grid: Any = None
     eftde_h1_grid: Any = None
-    eftde_h3_grid: Any = None
-    eftde_h5_grid: Any = None
+    eftde_d0_grid: Any = None
+    eftde_n3_grid: Any = None
+    eftde_n5_grid: Any = None
     eftde_k2_pivot: Any = 0.01
 
     # PHENOM/binning
@@ -200,12 +210,15 @@ class MGConstants:
     def __post_init__(self):
         if self.kind not in KINDS:
             raise ValueError(f'kind must be one of {KINDS}, got {self.kind!r}')
-        if self.kind == EFT_DE and self.eftde_eta_grid is None:
-            # GR fallback, matching ode.py's missing-interpolator behaviour.
-            object.__setattr__(self, 'eftde_eta_grid', jnp.asarray([0.0, 1.0]))
-            object.__setattr__(self, 'eftde_h1_grid', jnp.asarray([1.0, 1.0]))
-            object.__setattr__(self, 'eftde_h3_grid', jnp.asarray([0.0, 0.0]))
-            object.__setattr__(self, 'eftde_h5_grid', jnp.asarray([0.0, 0.0]))
+        if self.kind == EFT_DE:
+            grids = (self.eftde_eta_grid, self.eftde_h1_grid, self.eftde_d0_grid, self.eftde_n3_grid, self.eftde_n5_grid)
+            if any(grid is None for grid in grids):
+                # No silent GR: until 2026-10-22 a missing source fell back to h1 = 1, h3 = h5 = 0, which is
+                # how the eager full-kernel branch computed EFT_DE kernels in GR while the linear growth
+                # used the EFT_DE source (issue_eftde_full_kernels.md). GR is a model of its own (kind LCDM).
+                raise ValueError("kind='eft_de' needs the quasi-static source sampled on an eta grid: eftde_eta_grid, "
+                                 "eftde_h1_grid, eftde_d0_grid, eftde_n3_grid and eftde_n5_grid "
+                                 "(ode.ModelDerivatives.eftde_grids() builds them). For GR use kind='lcdm'.")
         if self.nu_eta_grid is None:
             # No neutrino correction requested (or none available): a trivial 2x2 grid of
             # all-ones makes _mu_neutrino_jax return exactly 1.0 everywhere, a genuine no-op.
@@ -254,7 +267,7 @@ def pack_constants_jnp(om, ol, mu1=1.0, mu2=1.0, mu3=1.0, mu4=1.0,
                        r_c=1.0e30, mu0=0.0,
                        beta_1=1.0, lambda_1=1.0, exp_s=1.0,
                        eftde_eta_grid=None, eftde_h1_grid=None,
-                       eftde_h3_grid=None, eftde_h5_grid=None,
+                       eftde_d0_grid=None, eftde_n3_grid=None, eftde_n5_grid=None,
                        eftde_scale_dependent=True, eftde_k2_pivot=0.01,
                        gamma_0=0.54545, gamma_a=0.0, t_k=1000.0, d_s=0.0001,
                        neutrino_correction=None):
@@ -299,7 +312,8 @@ def pack_constants_jnp(om, ol, mu1=1.0, mu2=1.0, mu3=1.0, mu4=1.0,
         k_TGR=f64(k_TGR), k_c=f64(k_c), k_S=f64(k_S), k_tw=f64(k_tw),
         mu_kinf=f64(mu_kinf), lambda_a=f64(lambda_a), lambda_dS=f64(lambda_dS),
         eftde_eta_grid=f64_opt(eftde_eta_grid), eftde_h1_grid=f64_opt(eftde_h1_grid),
-        eftde_h3_grid=f64_opt(eftde_h3_grid), eftde_h5_grid=f64_opt(eftde_h5_grid),
+        eftde_d0_grid=f64_opt(eftde_d0_grid), eftde_n3_grid=f64_opt(eftde_n3_grid),
+        eftde_n5_grid=f64_opt(eftde_n5_grid),
         eftde_k2_pivot=f64(eftde_k2_pivot),
         gamma_0=f64(gamma_0), gamma_a=f64(gamma_a), t_k=f64(t_k), d_s=f64(d_s),
         **nu_kwargs)
@@ -483,19 +497,27 @@ def _mu_bz(eta, k, P):
 
 
 def _mu_eft_de(eta, k, P):
-    """HDKI/EFT_DE; mirrors ``ode.py``'s ``'EFT_DE'`` variant, but takes
-    h1/h3/h5(eta) as pre-sampled grids (see the module docstring) instead of
-    Python callables.
+    """HDKI/EFT_DE; mirrors ``ode.py``'s ``'EFT_DE'`` variant (``ModelDerivatives._eftde_mu``),
+    but takes h1/D0/N3/N5(eta) as pre-sampled grids (see the module docstring) instead of
+    Python callables: mu = h1 (D0 + N5 k^2) / (D0 + N3 k^2), with the analytic branch mu = h1
+    where N5 == N3 (exact no-slip, exact GR: the ratio would be 0 / 0 at the GR point).
     """
     h1 = jnp.interp(eta, P.eftde_eta_grid, P.eftde_h1_grid)
-    h3 = jnp.interp(eta, P.eftde_eta_grid, P.eftde_h3_grid)
-    h5 = jnp.interp(eta, P.eftde_eta_grid, P.eftde_h5_grid)
+    d0 = jnp.interp(eta, P.eftde_eta_grid, P.eftde_d0_grid)
+    n3 = jnp.interp(eta, P.eftde_eta_grid, P.eftde_n3_grid)
+    n5 = jnp.interp(eta, P.eftde_eta_grid, P.eftde_n5_grid)
+
+    def ratio(k2):
+        den = d0 + n3 * k2
+        # a safe denominator for the untaken branch of the where (no NaN through its gradient); a
+        # genuine zero of the denominator away from N5 == N3 is the pole of the quasi-static
+        # expression, left as inf so that it surfaces rather than being silently regularised
+        den_safe = jnp.where(den == 0.0, 1.0, den)
+        return jnp.where(n5 == n3, 1.0, jnp.where(den == 0.0, jnp.inf, (d0 + n5 * k2) / den_safe))
+
     if P.eftde_scale_dependent:
-        k2 = k * k
-        return h1 * (1.0 + k2 * h5) / (1.0 + k2 * h3)
-    k2p = P.eftde_k2_pivot
-    mu_pivot = h1 * (1.0 + k2p * h5) / (1.0 + k2p * h3)
-    return mu_pivot + jnp.zeros_like(k)
+        return h1 * ratio(k * k)
+    return h1 * ratio(P.eftde_k2_pivot) + jnp.zeros_like(k)
 
 
 def _growth_index_mu(eta, P):
