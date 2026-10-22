@@ -345,7 +345,13 @@ class ModelDerivatives:
         EFTDE source over 0.01 <= k <= 0.3 h/Mpc with its value at the
         representative DESI scale k_pivot = 0.1 h/Mpc.  If the maximum
         fractional departure exceeds 3% at any sampled time, the model is
-        treated as scale-dependent.
+        treated as scale-dependent.  A non-finite source at any sampled
+        (eta, k) -- the pole of the quasi-static expression -- is classified
+        scale-dependent as well: the k-dependent branch then shows it.
+
+        Vectorised: the four source callables are evaluated once each on the
+        10 sampled times (:meth:`_eftde_coefficients_on`) and mu is formed on
+        the (time, wavenumber) grid in one go.
         """
         model = str(getattr(self, "model", "")).strip().upper()
         variant = str(getattr(self, "mg_variant", "")).strip().lower()
@@ -355,33 +361,21 @@ class ModelDerivatives:
         if not self._eftde_has_source():
             return False
 
-        k_pivot = self._EFTDE_K_PIVOT
-        kbins = np.geomspace(self._EFTDE_K_MIN, self._EFTDE_K_MAX, 20)
         etabins = np.linspace(-4.0, 0.0, 10)
-        k2 = np.square(kbins)
-        k2_pivot = k_pivot**2
+        k2 = np.square(np.geomspace(self._EFTDE_K_MIN, self._EFTDE_K_MAX, 20))[None, :]   # (1, nk)
+        k2_pivot = self._EFTDE_K_PIVOT**2
 
-        for eta in etabins:
-            h1, D0, N3, N5 = self._eftde_coefficients(eta)
-            if not np.all(np.isfinite(np.asarray([h1, D0, N3, N5], dtype=float))):
-                return True
+        coefficients = self._eftde_coefficients_on(etabins)
+        if not all(np.all(np.isfinite(c)) for c in coefficients):
+            return True
+        h1, D0, N3, N5 = (c[:, None] for c in coefficients)                                # (neta, 1)
+        mu_k = self._eftde_mu(h1, D0, N3, N5, k2)                                          # (neta, nk)
+        mu_pivot = self._eftde_mu(h1, D0, N3, N5, k2_pivot)                                # (neta, 1)
+        if not (np.all(np.isfinite(mu_k)) and np.all(np.isfinite(mu_pivot))):
+            return True
 
-            mu_k = self._eftde_mu(h1, D0, N3, N5, k2)
-            mu_pivot = self._eftde_mu(h1, D0, N3, N5, k2_pivot)
-
-            # a non-finite source (the pole of the quasi-static expression at one of the sampled k)
-            # is classified scale-dependent, as before: the k-dependent branch then shows it
-            if not np.all(np.isfinite(mu_k)) or not np.all(np.isfinite(mu_pivot)):
-                return True
-
-            normalization = max(np.abs(float(mu_pivot)), 1.0e-12)
-            max_fractional_departure = np.max(
-                np.abs(mu_k - mu_pivot) / normalization
-            )
-            if max_fractional_departure > self._EFTDE_SCALE_TOL:
-                return True
-
-        return False
+        normalization = np.maximum(np.abs(mu_pivot), 1.0e-12)
+        return bool(np.any(np.abs(mu_k - mu_pivot) / normalization > self._EFTDE_SCALE_TOL))
 
     _EFTDE_SOURCE_NAMES = ('eftde_h1_interp', 'eftde_d0_interp', 'eftde_n3_interp', 'eftde_n5_interp')
 
@@ -390,9 +384,29 @@ class ModelDerivatives:
         return all(getattr(self, name, None) is not None for name in self._EFTDE_SOURCE_NAMES)
 
     def _eftde_coefficients(self, eta):
-        """``(h1, D0, N3, N5)`` at ``eta``."""
+        """``(h1, D0, N3, N5)`` at a scalar ``eta``, as the callables return them: the right-hand side's path."""
         return (self.eftde_h1_interp(eta), self.eftde_d0_interp(eta),
                 self.eftde_n3_interp(eta), self.eftde_n5_interp(eta))
+
+    def _eftde_coefficients_on(self, eta):
+        """``(h1, D0, N3, N5)`` on an array of ``eta``, each a float array of ``eta``'s shape.
+
+        Each callable is evaluated once on the whole array -- cubic splines, ``np.interp`` closures and
+        constants all take arrays, and a constant's scalar is broadcast. A callable that only accepts a
+        scalar (a ``math`` expression, a Python ``if``) is evaluated point by point instead. The
+        scale-dependence check and :meth:`eftde_grids` go through here; the right-hand side keeps the
+        scalar :meth:`_eftde_coefficients`.
+        """
+        eta = np.asarray(eta, dtype=float)
+        values = []
+        for name in self._EFTDE_SOURCE_NAMES:
+            func = getattr(self, name)
+            try:
+                value = np.broadcast_to(np.asarray(func(eta), dtype=float), eta.shape)
+            except (TypeError, ValueError):
+                value = np.array([float(func(x)) for x in eta.ravel()], dtype=float).reshape(eta.shape)
+            values.append(np.array(value, dtype=float))   # a writable copy of its own
+        return tuple(values)
 
     @staticmethod
     def _eftde_mu(h1, D0, N3, N5, k2):
@@ -416,10 +430,8 @@ class ModelDerivatives:
         eta_grid = np.asarray(eta_grid, dtype=float).ravel()
         if not self._eftde_has_source():
             raise ValueError("eftde_grids: the EFT_DE source (h1, D0, N3, N5) was not supplied")
-        rows = np.array([[float(np.asarray(v, dtype=float).ravel()[0]) for v in self._eftde_coefficients(eta)]
-                         for eta in eta_grid])
-        return dict(eftde_eta_grid=eta_grid, eftde_h1_grid=rows[:, 0], eftde_d0_grid=rows[:, 1],
-                    eftde_n3_grid=rows[:, 2], eftde_n5_grid=rows[:, 3],
+        h1, D0, N3, N5 = self._eftde_coefficients_on(eta_grid)
+        return dict(eftde_eta_grid=eta_grid, eftde_h1_grid=h1, eftde_d0_grid=D0, eftde_n3_grid=N3, eftde_n5_grid=N5,
                     eftde_scale_dependent=bool(self.is_EFTDE_scale_dependent),
                     eftde_k2_pivot=float(self._EFTDE_K_PIVOT) ** 2)
 
